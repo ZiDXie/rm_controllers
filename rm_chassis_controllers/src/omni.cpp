@@ -21,6 +21,9 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
   controller_nh.getParam("wheels", wheels);
   chassis2joints_.resize(wheels.size(), 3);
 
+  // Get feedforward gain
+  controller_nh.getParam("K", K);
+
   size_t i = 0;
   for (const auto& wheel : wheels)
   {
@@ -54,6 +57,13 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
 void OmniController::moveJoint(const ros::Time& time, const ros::Duration& period)
 {
   Eigen::Vector3d vel_chassis;
+  if (state_==RAW)
+  {
+    geometry_msgs::Twist vel_base= odometry();
+    double Kp=K*abs(vel_cmd_.z);
+    vel_cmd_.x=vel_cmd_.x+Kp*(vel_cmd_.x-vel_base.linear.x);
+    vel_cmd_.y=vel_cmd_.y+Kp*(vel_cmd_.y-vel_base.linear.y);
+  }
   vel_chassis << vel_cmd_.z, vel_cmd_.x, vel_cmd_.y;
   Eigen::VectorXd vel_joints = chassis2joints_ * vel_chassis;
   for (size_t i = 0; i < joints_.size(); i++)

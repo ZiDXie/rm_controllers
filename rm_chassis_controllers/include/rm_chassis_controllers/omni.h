@@ -7,6 +7,7 @@
 #include <Eigen/Dense>
 
 #include "rm_chassis_controllers/chassis_base.h"
+#include <rm_common/filters/lp_filter.h>
 
 namespace rm_chassis_controllers
 {
@@ -20,6 +21,7 @@ private:
   void moveJoint(const ros::Time& time, const ros::Duration& period) override;
   geometry_msgs::Twist odometry() override;
 
+  double K=0.;//Feedforward gain
   std::vector<std::shared_ptr<effort_controllers::JointVelocityController>> joints_;
   Eigen::MatrixXd chassis2joints_;
 };
