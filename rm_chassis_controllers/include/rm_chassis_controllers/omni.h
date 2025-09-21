@@ -7,7 +7,6 @@
 #include <Eigen/Dense>
 
 #include "rm_chassis_controllers/chassis_base.h"
-#include <rm_common/filters/lp_filter.h>
 
 namespace rm_chassis_controllers
 {
