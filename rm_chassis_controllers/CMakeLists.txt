@@ -21,9 +21,14 @@ find_package(catkin REQUIRED
         tf2_geometry_msgs
         nav_msgs
         angles
+        dynamic_reconfigure
 )
 
 find_package(Eigen3 REQUIRED)
+
+generate_dynamic_reconfigure_options(
+  cfg/PowerLimit.cfg 
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -48,6 +53,7 @@ catkin_package(
         tf2_geometry_msgs
         nav_msgs
         angles
+        dynamic_reconfigure
         LIBRARIES ${PROJECT_NAME}
 )
 

@@ -36,7 +36,7 @@
 //
 
 #include "rm_chassis_controllers/swerve.h"
-
+#include "rm_common/math_utilities.h"
 #include <angles/angles.h>
 #include <pluginlib/class_list_macros.hpp>
 
@@ -73,10 +73,19 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
       return false;
     if (module.second["pivot"].hasMember("offset"))
       m.pivot_offset_ = module.second["pivot"]["offset"];
-    joint_handles_.push_back(m.ctrl_pivot_->joint_);
-    joint_handles_.push_back(m.ctrl_wheel_->joint_);
+    pivot_joint_handles_.push_back(m.ctrl_pivot_->joint_);
+    wheel_joint_handles_.push_back(m.ctrl_wheel_->joint_);
     modules_.push_back(m);
   }
+  // power limit
+  if (!controller_nh.getParam("power/pivot_max_power", pivot_max_power_) ||
+      !controller_nh.getParam("power/pivot_effort_coeff", pivot_effort_coeff_) ||
+      !controller_nh.getParam("power/pivot_velocity_coeff", pivot_velocity_coeff_))
+  {
+    ROS_ERROR("Some pivot power limit params doesn't given (namespace: %s)", controller_nh.getNamespace().c_str());
+    return false;
+  }
+
   return true;
 }
 
@@ -123,6 +132,57 @@ geometry_msgs::Twist SwerveController::odometry()
       vel_modules.angular.z / modules_.size() /
       std::sqrt(std::pow(modules_.begin()->position_.x(), 2) + std::pow(modules_.begin()->position_.y(), 2));
   return vel_data;
+}
+
+void SwerveController::powerLimit()
+{
+  double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
+  double wheel_power_limit{};
+
+  // Avoid too much power allocated to pivot joints
+  double pivot_power_limit = std::min(power_limit / 2.0, pivot_max_power_);
+  // Three coefficients of a quadratic equation for pivot joints
+  double a_p{}, b_p{}, c_p = {};
+  for (const auto& joint : pivot_joint_handles_)
+  {
+    double cmd_effort = joint.getCommand();
+    double real_vel = joint.getVelocity();
+    a_p += square(cmd_effort);
+    b_p += cmd_effort * real_vel;
+    c_p += square(real_vel);
+  }
+  a_p *= pivot_effort_coeff_;
+  c_p = c_p * pivot_velocity_coeff_ - pivot_power_limit;
+  // Root formula for quadratic equation in one variable
+  double zoom_pivot =
+      (square(b_p) - 4.0 * a_p * c_p) > 0.0 ? ((-b_p + sqrt(square(b_p) - 4.0 * a_p * c_p)) / (2.0 * a_p)) : 0.0;
+  double actual_zoom = zoom_pivot > 1.0 ? 1.0 : zoom_pivot;
+  double pivot_power = square(actual_zoom) * a_p + actual_zoom * b_p + (c_p + pivot_power_limit);
+  for (auto joint : pivot_joint_handles_)
+  {
+    joint.setCommand(actual_zoom * joint.getCommand());
+  }
+  // Remaining power for wheels
+  wheel_power_limit = power_limit + power_offset_ - pivot_power;
+
+  // Three coefficients of a quadratic equation for wheel joints
+  double a_w{}, b_w{}, c_w{};
+  for (const auto& joint : wheel_joint_handles_)
+  {
+    double cmd_effort = joint.getCommand();
+    double real_vel = joint.getVelocity();
+    a_w += square(cmd_effort);
+    b_w += cmd_effort * real_vel;
+    c_w += square(real_vel);
+  }
+  a_w *= effort_coeff_;
+  c_w = c_w * velocity_coeff_ - wheel_power_limit;
+  // Root formula for quadratic equation in one variable
+  double zoom_coeff = (square(b_w) - 4 * a_w * c_w) > 0 ? ((-b_w + sqrt(square(b_w) - 4 * a_w * c_w)) / (2 * a_w)) : 0.;
+  for (auto joint : wheel_joint_handles_)
+  {
+    joint.setCommand(zoom_coeff > 1 ? joint.getCommand() : joint.getCommand() * zoom_coeff);
+  }
 }
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)
