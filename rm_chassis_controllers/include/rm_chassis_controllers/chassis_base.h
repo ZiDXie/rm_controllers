@@ -69,12 +69,6 @@ struct Command
   ros::Time stamp_;
 };
 
-struct PowerLimitParams
-{
-  double velocity_coeff{};
-  double effort_coeff{};
-  double power_offset{};
-};
 template <typename... T>
 class ChassisBase : public controller_interface::MultiInterfaceController<T...>
 {
@@ -162,6 +156,7 @@ protected:
   void initialize_parameters(ros::NodeHandle& controller_nh);
   void slamCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void localizationCallback(const geometry_msgs::TransformStamped::ConstPtr& msg);
+  void powerLimitReconfigCB(rm_chassis_controllers::PowerLimitConfig& config, uint32_t level);
 
   rm_control::RobotStateHandle robot_state_handle_{};
   hardware_interface::EffortJointInterface* effort_joint_interface_{};
@@ -169,7 +164,7 @@ protected:
   realtime_tools::RealtimeBuffer<Command> cmd_rt_buffer_{};
   realtime_tools::RealtimeBuffer<nav_msgs::Odometry> slam_rt_buffer_{};
   realtime_tools::RealtimeBuffer<geometry_msgs::TransformStamped> localization_rt_buffer_{};
-  realtime_tools::RealtimeBuffer<PowerLimitParams> power_limit_rt_buffer_{};
+  realtime_tools::RealtimeBuffer<rm_chassis_controllers::PowerLimitConfig> power_limit_rt_buffer_;
   std::unique_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry>> odometry_rt_pub_;
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> wheel_power_pub_;
   dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>* power_limit_srv_{};
@@ -200,11 +195,6 @@ protected:
   bool publish_map_tf_{ false };
   bool publish_odom_tf_{ false };
 
-  double velocity_coeff_{ 0.0 };
-  double effort_coeff_{ 0.0 };
-  double power_offset_{ 0.0 };
-  bool power_limit_reconfig_initialized_{ false };
-
   double wheel_radius_{ 0.02 };
   double twist_angular_{ M_PI / 6 };
   double max_odom_vel_{ 10.0 };
@@ -230,7 +220,6 @@ protected:
   control_toolbox::Pid pid_follow_{};
 
   Command cmd_struct_{};
-  PowerLimitParams power_config_{};
 
   enum
   {

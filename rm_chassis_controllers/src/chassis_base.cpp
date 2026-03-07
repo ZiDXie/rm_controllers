@@ -53,10 +53,6 @@ void ChassisBase<T...>::initialize_parameters(ros::NodeHandle& controller_nh)
     controller_nh.getParam("slam_topic", slam_topic_);
     controller_nh.getParam("localization_topic", localization_topic_);
 
-    controller_nh.getParam("power/vel_coeff", velocity_coeff_);
-    controller_nh.getParam("power/effort_coeff", effort_coeff_);
-    controller_nh.getParam("power/power_offset", power_offset_);
-
     controller_nh.getParam("wheel_radius", wheel_radius_);
     controller_nh.getParam("twist_angular", twist_angular_);
     controller_nh.getParam("max_odom_vel", max_odom_vel_);
@@ -85,9 +81,14 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
   localization_sub_ = controller_nh.subscribe<geometry_msgs::TransformStamped>(
       localization_topic_, 10, &ChassisBase::localizationCallback, this);
 
-  // power publisher
+  // power publisher and dynamic reconfigure
+  power_limit_srv_ = new dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>(
+      ros::NodeHandle(controller_nh, "power"));
+  dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>::CallbackType cb =
+      boost::bind(&ChassisBase<T...>::powerLimitReconfigCB, this, _1, _2);
+  power_limit_srv_->setCallback(cb);
   auto power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "wheel_power", 100);
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/wheel_power", 100);
   this->wheel_power_pub_ = std::move(power_publisher);
 
   // Setup odometry realtime publisher + odom message constant fields
@@ -439,6 +440,12 @@ void ChassisBase<T...>::powerLimit()
 {
   double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
   // Three coefficients of a quadratic equation in one variable
+  const auto& power_config = *power_limit_rt_buffer_.readFromRT();
+
+  double vel_coeff = power_config.vel_coeff;
+  double effort_coeff = power_config.effort_coeff;
+  double power_offset = power_config.power_offset;
+
   double a = 0., b = 0., c = 0.;
   for (const auto& joint : wheel_joint_handles_)
   {
@@ -448,8 +455,8 @@ void ChassisBase<T...>::powerLimit()
     b += std::abs(cmd_effort * real_vel);
     c += square(real_vel);
   }
-  a *= effort_coeff_;
-  c = c * velocity_coeff_ - power_offset_ - power_limit;
+  a *= effort_coeff;
+  c = c * vel_coeff - power_offset - power_limit;
   // Root formula for quadratic equation in one variable
   double zoom_coeff_tmp = (square(b) - 4 * a * c) > 0 ? ((-b + sqrt(square(b) - 4 * a * c)) / (2 * a)) : 0.;
   double zoom_coeff = std::min(zoom_coeff_tmp, 1.0);
@@ -457,7 +464,7 @@ void ChassisBase<T...>::powerLimit()
   {
     joint.setCommand(joint.getCommand() * zoom_coeff);
   }
-  double wheel_power = square(zoom_coeff) * a + zoom_coeff * b + (c + power_limit + power_offset_);
+  double wheel_power = square(zoom_coeff) * a + zoom_coeff * b + (c + power_limit + power_offset);
   if (wheel_power_pub_->trylock())
   {
     wheel_power_pub_->msg_.data = wheel_power;
@@ -505,6 +512,13 @@ void ChassisBase<T...>::localizationCallback(const geometry_msgs::TransformStamp
 {
   localization_rt_buffer_.writeFromNonRT(*msg);
   localization_updated_ = true;
+}
+
+template <typename... T>
+void ChassisBase<T...>::powerLimitReconfigCB(rm_chassis_controllers::PowerLimitConfig& config, uint32_t /*level*/)
+{
+  ROS_INFO("[Power Limit] Dynamic params change");
+  power_limit_rt_buffer_.writeFromNonRT(config);
 }
 
 }  // namespace rm_chassis_controllers

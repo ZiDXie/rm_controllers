@@ -62,9 +62,10 @@ private:
   void moveJoint(const ros::Time& time, const ros::Duration& period) override;
   geometry_msgs::Twist odometry() override;
   void powerLimit() override;
+
   std::vector<Module> modules_{};
   std::vector<hardware_interface::JointHandle> pivot_joint_handles_{};
-  double pivot_max_power_{},pivot_effort_coeff_{},pivot_velocity_coeff_{};
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> pivot_power_pub_;
 };
 
 }  // namespace rm_chassis_controllers

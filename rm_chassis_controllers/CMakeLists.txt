@@ -27,7 +27,7 @@ find_package(catkin REQUIRED
 find_package(Eigen3 REQUIRED)
 
 generate_dynamic_reconfigure_options(
-  cfg/PowerLimit.cfg 
+  cfg/PowerLimit.cfg
 )
 
 ###################################
