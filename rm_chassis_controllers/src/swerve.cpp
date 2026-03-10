@@ -142,9 +142,10 @@ void SwerveController::powerLimit()
   double pivot_max_power = power_config.pivot_max_power;
   double pivot_effort_coeff = power_config.pivot_effort_coeff;
   double pivot_vel_coeff = power_config.pivot_vel_coeff;
+  double pivot_power_ratio = power_config.pivot_power_ratio;
 
   // Avoid too much power allocated to pivot joints
-  double pivot_power_limit = std::min(power_limit / 2.0, pivot_max_power);
+  double pivot_power_limit = std::min(power_limit * pivot_power_ratio, pivot_max_power);
   // Three coefficients of a quadratic equation for pivot joints
   double a_p{}, b_p{}, c_p = {};
   for (const auto& joint : pivot_joint_handles_)
