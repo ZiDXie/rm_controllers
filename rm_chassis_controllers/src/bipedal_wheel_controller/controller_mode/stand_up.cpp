@@ -79,7 +79,7 @@ void StandUp::setUpLegMotion(const Eigen::Matrix<double, STATE_DIM, 1>& x, const
     case LegState::FRONT:
       theta_des = M_PI_2 - 0.35;
       length_des = 0.36;
-      if ((abs(x[0] - theta_des) < 0.3 && abs(x[4]) < 0.3) || (abs(x[1]) < 0.1 && x[0] > M_PI_2))
+      if ((abs(x[1]) < 0.5 && x[0] > 0))
         leg_state = LegState::BEHIND;
       break;
     case LegState::BEHIND:
@@ -140,6 +140,7 @@ inline LegCommand StandUp::computePidLegCommand(double desired_length, double de
   }
   else
   {
+    //    double cmd_leg_angle_vel = -5 * (angles::shortest_angular_distance(desired_angle, leg_pos[1]) - 0.5);
     cmd.torque = angle_vel_pid.computeCommand(-5 - leg_spd[1], period);
   }
   vmcPtr_->leg_conv(cmd.force, cmd.torque, leg_angle[0], leg_angle[1], cmd.input);
