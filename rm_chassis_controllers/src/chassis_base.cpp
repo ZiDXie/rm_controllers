@@ -87,9 +87,6 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
   dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>::CallbackType cb =
       boost::bind(&ChassisBase<T...>::powerLimitReconfigCB, this, _1, _2);
   power_limit_srv_->setCallback(cb);
-  auto power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/wheel_power", 100);
-  this->wheel_power_pub_ = std::move(power_publisher);
 
   // Setup odometry realtime publisher + odom message constant fields
   auto odometry_publisher =
@@ -390,6 +387,9 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         odom2base_quat.normalize();
         robot_odom2robot_base_.transform.rotation = tf2::toMsg(odom2base_quat);
       }
+
+      quatToRPY(robot_odom2robot_base_.transform.rotation, roll_, pitch_, yaw_);
+
       robot_state_handle_.setTransform(robot_odom2robot_base_, "rm_chassis_controllers");
 
       odometry_rt_pub_->msg_.header.stamp = time;
@@ -438,38 +438,11 @@ void ChassisBase<T...>::recovery()
 template <typename... T>
 void ChassisBase<T...>::powerLimit()
 {
-  double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
-  // Three coefficients of a quadratic equation in one variable
-  const auto& power_config = *power_limit_rt_buffer_.readFromRT();
+}
 
-  double vel_coeff = power_config.vel_coeff;
-  double effort_coeff = power_config.effort_coeff;
-  double power_offset = power_config.power_offset;
-
-  double a = 0., b = 0., c = 0.;
-  for (const auto& joint : wheel_joint_handles_)
-  {
-    double cmd_effort = joint.getCommand();
-    double real_vel = joint.getVelocity();
-    a += square(cmd_effort);
-    b += std::abs(cmd_effort * real_vel);
-    c += square(real_vel);
-  }
-  a *= effort_coeff;
-  c = c * vel_coeff - power_offset - power_limit;
-  // Root formula for quadratic equation in one variable
-  double zoom_coeff_tmp = (square(b) - 4 * a * c) > 0 ? ((-b + sqrt(square(b) - 4 * a * c)) / (2 * a)) : 0.;
-  double zoom_coeff = std::min(zoom_coeff_tmp, 1.0);
-  for (auto joint : wheel_joint_handles_)
-  {
-    joint.setCommand(joint.getCommand() * zoom_coeff);
-  }
-  double wheel_power = square(zoom_coeff) * a + zoom_coeff * b + (c + power_limit + power_offset);
-  if (wheel_power_pub_->trylock())
-  {
-    wheel_power_pub_->msg_.data = wheel_power;
-    wheel_power_pub_->unlockAndPublish();
-  }
+template <typename... T>
+void ChassisBase<T...>::updatePowerStatus()
+{
 }
 
 template <typename... T>

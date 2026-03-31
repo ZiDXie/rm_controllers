@@ -59,6 +59,7 @@
 #include <std_msgs/Float64.h>
 #include <dynamic_reconfigure/server.h>
 #include <rm_chassis_controllers/PowerLimitConfig.h>
+#include <rm_msgs/PowerManagementSampleAndStatusData.h>
 
 namespace rm_chassis_controllers
 {
@@ -67,6 +68,24 @@ struct Command
   geometry_msgs::Twist cmd_vel_;
   rm_msgs::ChassisCmd cmd_chassis_;
   ros::Time stamp_;
+};
+
+struct PowerLimitor
+{
+  double vel_coeff{};
+  double effort_coeff{};
+  double power_offset{};
+  double max_power{};
+  double power_sum{};
+  double ratio{ 1.0 };
+  double Err_upper{};
+  double Err_lower{};
+  double Err_sum{};
+  double A{};
+  double B{};
+  double C{};
+  double Delta{};
+  double K{};
 };
 
 template <typename... T>
@@ -142,6 +161,7 @@ protected:
    * Receive power limit from command. Set max_effort command to chassis to avoid exceed power limit.
    */
   virtual void powerLimit();
+  virtual void updatePowerStatus();
   /** @brief Write current command from rm_msgs::ChassisCmd.
    *
    * @param msg This message contains various state parameter settings for basic chassis control
@@ -166,7 +186,8 @@ protected:
   realtime_tools::RealtimeBuffer<geometry_msgs::TransformStamped> localization_rt_buffer_{};
   realtime_tools::RealtimeBuffer<rm_chassis_controllers::PowerLimitConfig> power_limit_rt_buffer_;
   std::unique_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry>> odometry_rt_pub_;
-  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> wheel_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> ewheel_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> cwheel_power_pub_;
   dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>* power_limit_srv_{};
 
   rm_common::TfRtBroadcaster brcst4global_map2robot_odom_{};
@@ -190,6 +211,8 @@ protected:
   std::unique_ptr<RampFilter<double>> ramp_x_{ nullptr };
   std::unique_ptr<RampFilter<double>> ramp_y_{ nullptr };
   std::unique_ptr<RampFilter<double>> ramp_w_{ nullptr };
+
+  double roll_{ 0. }, pitch_{ 0. }, yaw_{ 0. };
 
   double publish_rate_{ 100.0 };
   bool publish_map_tf_{ false };
@@ -220,6 +243,7 @@ protected:
   control_toolbox::Pid pid_follow_{};
 
   Command cmd_struct_{};
+  PowerLimitor wheel_power_limitor_{};
 
   enum
   {

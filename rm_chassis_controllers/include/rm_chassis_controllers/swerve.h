@@ -39,6 +39,8 @@
 
 #include "rm_chassis_controllers/chassis_base.h"
 
+#include <rm_common/rls.h>
+#include <rm_msgs/PowerManagementSampleAndStatusData.h>
 #include <rm_common/eigen_types.h>
 #include <effort_controllers/joint_position_controller.h>
 
@@ -62,10 +64,19 @@ private:
   void moveJoint(const ros::Time& time, const ros::Duration& period) override;
   geometry_msgs::Twist odometry() override;
   void powerLimit() override;
+  void updatePowerStatus() override;
+  void getBaseGyro();
 
   std::vector<Module> modules_{};
   std::vector<hardware_interface::JointHandle> pivot_joint_handles_{};
-  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> pivot_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> epivot_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> cpivot_power_pub_;
+
+  PowerLimitor pivot_power_limitor_{};
+
+  bool has_gimbal_imu_{ false };
+  hardware_interface::ImuSensorHandle imu_handle_{};
+  geometry_msgs::Vector3 base_gyro_{};
 };
 
 }  // namespace rm_chassis_controllers

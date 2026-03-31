@@ -48,9 +48,29 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
   if (!ChassisBase::init(robot_hw, root_nh, controller_nh))
     return false;
 
-  auto pivot_power_publisher =
+  auto* imu_handle = robot_hw->get<hardware_interface::ImuSensorInterface>();
+  if (imu_handle == nullptr)
+  {
+    ROS_WARN("SwerveController requires gimbal_imu");
+  }
+  else
+  {
+    imu_handle_ = imu_handle->getHandle("gimbal_imu");
+    has_gimbal_imu_ = true;
+  }
+
+  auto ewheel_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
+  this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
+  auto cwheel_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cwheel_power", 100);
+  this->cwheel_power_pub_ = std::move(cwheel_power_publisher);
+  auto epivot_power_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/pivot_power", 100);
-  this->pivot_power_pub_ = std::move(pivot_power_publisher);
+  this->epivot_power_pub_ = std::move(epivot_power_publisher);
+  auto cpivot_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cpivot_power", 100);
+  this->cpivot_power_pub_ = std::move(cpivot_power_publisher);
 
   XmlRpc::XmlRpcValue modules;
   controller_nh.getParam("modules", modules);
@@ -90,6 +110,7 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
 
 void SwerveController::moveJoint(const ros::Time& time, const ros::Duration& period)
 {
+  // getBaseGyro();
   Vec2<double> vel_center(vel_cmd_.x, vel_cmd_.y);
   for (auto& module : modules_)
   {
@@ -131,75 +152,99 @@ geometry_msgs::Twist SwerveController::odometry()
   return vel_data;
 }
 
+void SwerveController::getBaseGyro()
+{
+  // Todo: because swerve don't have chassis imu, we use gimbal imu to get chassis gyro. This is not good because of the
+  // gimbal's rotation. A better solution is to install an imu on the chassis.
+  if (has_gimbal_imu_)
+  {
+    geometry_msgs::Vector3 imu_gyro{};
+    imu_gyro.x = imu_handle_.getAngularVelocity()[0];
+    imu_gyro.y = imu_handle_.getAngularVelocity()[1];
+    imu_gyro.z = imu_handle_.getAngularVelocity()[2];
+    try
+    {
+      tf2::doTransform(imu_gyro, base_gyro_,
+                       robot_state_handle_.lookupTransform("base_link", imu_handle_.getFrameId(), ros::Time(0)));
+    }
+    catch (tf2::TransformException& ex)
+    {
+      ROS_WARN_THROTTLE(1.0, "%s", ex.what());
+    }
+  }
+}
+
 void SwerveController::powerLimit()
 {
+  updatePowerStatus();
+
+  auto power_group = [](std::vector<hardware_interface::JointHandle>& joints, const PowerLimitor& limitor) {
+
+  };
+
+  power_group(pivot_joint_handles_, pivot_power_limitor_);
+  power_group(wheel_joint_handles_, wheel_power_limitor_);
+}
+
+void SwerveController::updatePowerStatus()
+{
   double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
-
   const auto& power_config = *power_limit_rt_buffer_.readFromRT();
-  double vel_coeff = power_config.vel_coeff;
-  double effort_coeff = power_config.effort_coeff;
-  double power_offset = power_config.power_offset;
-  double pivot_max_power = power_config.pivot_max_power;
-  double pivot_effort_coeff = power_config.pivot_effort_coeff;
-  double pivot_vel_coeff = power_config.pivot_vel_coeff;
-  double pivot_power_ratio = power_config.pivot_power_ratio;
-
-  // Avoid too much power allocated to pivot joints
-  double pivot_power_limit = std::min(power_limit * pivot_power_ratio, pivot_max_power);
-  // Three coefficients of a quadratic equation for pivot joints
-  double a_p{}, b_p{}, c_p = {};
+  pivot_power_limitor_ = { .vel_coeff = power_config.pivot_vel_coeff,
+                           .effort_coeff = power_config.pivot_effort_coeff,
+                           .power_offset = 0,
+                           .max_power =
+                               std::min(power_config.pivot_max_power, power_limit * power_config.pivot_power_ratio),
+                           .ratio = power_config.pivot_power_ratio };
+  double epivot_power{}, cpivot_power{};
   for (const auto& joint : pivot_joint_handles_)
   {
-    double cmd_effort = joint.getCommand();
+    double cmd_torque = joint.getCommand();
     double real_vel = joint.getVelocity();
-    a_p += square(cmd_effort);
-    b_p += cmd_effort * real_vel;
-    c_p += square(real_vel);
+    double real_torque = joint.getEffort();
+    epivot_power += real_torque * real_vel / 9.55f + pivot_power_limitor_.effort_coeff * square(real_torque) +
+                    pivot_power_limitor_.vel_coeff * square(real_vel);
+    cpivot_power += cmd_torque * real_vel / 9.55f + pivot_power_limitor_.effort_coeff * square(cmd_torque) +
+                    pivot_power_limitor_.vel_coeff * square(real_vel);
   }
-  a_p *= pivot_effort_coeff;
-  c_p = c_p * pivot_vel_coeff - pivot_power_limit;
-  // Root formula for quadratic equation in one variable
-  double zoom_pivot_tmp =
-      (square(b_p) - 4.0 * a_p * c_p) > 0.0 ? ((-b_p + sqrt(square(b_p) - 4.0 * a_p * c_p)) / (2.0 * a_p)) : 0.0;
-  double zoom_pivot = std::min(zoom_pivot_tmp, 1.0);
-  double pivot_power = square(zoom_pivot) * a_p + zoom_pivot * b_p + (c_p + pivot_power_limit);
-  for (auto joint : pivot_joint_handles_)
-  {
-    joint.setCommand(zoom_pivot * joint.getCommand());
-  }
-  // Remaining power for wheels
-  double wheel_power_limit = power_limit + power_offset - pivot_power;
+  pivot_power_limitor_.power_sum = cpivot_power;
 
-  // Three coefficients of a quadratic equation for wheel joints
-  double a_w{}, b_w{}, c_w{};
+  wheel_power_limitor_ = { .vel_coeff = power_config.vel_coeff,
+                           .effort_coeff = power_config.effort_coeff,
+                           .power_offset = power_config.power_offset,
+                           .max_power = power_limit - std::min(cpivot_power, pivot_power_limitor_.max_power) };
+  double ewheel_power{}, cwheel_power{};
   for (const auto& joint : wheel_joint_handles_)
   {
-    double cmd_effort = joint.getCommand();
+    double cmd_torque = joint.getCommand();
     double real_vel = joint.getVelocity();
-    a_w += square(cmd_effort);
-    b_w += cmd_effort * real_vel;
-    c_w += square(real_vel);
+    double real_torque = joint.getEffort();
+    ewheel_power += real_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(real_torque) +
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
+    cwheel_power += cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
   }
-  a_w *= effort_coeff;
-  c_w = c_w * vel_coeff - wheel_power_limit;
-  // Root formula for quadratic equation in one variable
-  double zoom_wheel_tmp =
-      (square(b_w) - 4 * a_w * c_w) > 0 ? ((-b_w + sqrt(square(b_w) - 4 * a_w * c_w)) / (2 * a_w)) : 0.;
-  double zoom_wheel = std::min(zoom_wheel_tmp, 1.0);
-  double wheel_power = square(zoom_wheel) * a_w + zoom_wheel * b_w + (c_w + wheel_power_limit);
-  for (auto joint : wheel_joint_handles_)
+  wheel_power_limitor_.power_sum = cwheel_power;
+
+  if (epivot_power_pub_->trylock())
   {
-    joint.setCommand(joint.getCommand() * zoom_wheel);
+    epivot_power_pub_->msg_.data = epivot_power;
+    epivot_power_pub_->unlockAndPublish();
   }
-  if (wheel_power_pub_->trylock())
+  if (cpivot_power_pub_->trylock())
   {
-    wheel_power_pub_->msg_.data = wheel_power;
-    wheel_power_pub_->unlockAndPublish();
+    cpivot_power_pub_->msg_.data = cpivot_power;
+    cpivot_power_pub_->unlockAndPublish();
   }
-  if (pivot_power_pub_->trylock())
+  if (ewheel_power_pub_->trylock())
   {
-    pivot_power_pub_->msg_.data = pivot_power;
-    pivot_power_pub_->unlockAndPublish();
+    ewheel_power_pub_->msg_.data = ewheel_power;
+    ewheel_power_pub_->unlockAndPublish();
+  }
+  if (cwheel_power_pub_->trylock())
+  {
+    cwheel_power_pub_->msg_.data = cwheel_power;
+    cwheel_power_pub_->unlockAndPublish();
   }
 }
 
