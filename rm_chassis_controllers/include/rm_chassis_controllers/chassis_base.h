@@ -76,15 +76,16 @@ struct PowerLimitor
   double effort_coeff{};
   double power_offset{};
   double max_power{};
+  double power_in[4]{};
   double power_sum{};
+  double power_limit[4]{};
   double ratio{ 1.0 };
-  double Err_upper{};
-  double Err_lower{};
-  double Err_sum{};
-  double A{};
-  double B{};
-  double C{};
-  double Delta{};
+  double err[4]{};
+  double err_upper{};
+  double err_lower{};
+  double err_sum{};
+  double omiga[4]{};
+  double torque[4]{};
   double K{};
 };
 
