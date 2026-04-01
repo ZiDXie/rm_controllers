@@ -27,13 +27,17 @@ void SitDown::execute(BipedalController* controller, const ros::Time& time, cons
   setJointCommands(joint_handles_, left_cmd, right_cmd, left_wheel_cmd, right_wheel_cmd);
 
   // Exit
-  if (abs(x_left_(1)) < 0.1 && controller->getBaseState() != 4)
+  if (abs(x_left_(5)) < 0.1 && controller->getBaseState() != rm_msgs::ChassisCmd::FALLEN)
   {
-    if (!controller->getOverturn())
-      controller->setMode(BalanceMode::STAND_UP);
-    else
-      controller->setMode(BalanceMode::RECOVER);
     controller->setStateChange(false);
+    if (controller->getOverturn())
+    {
+      controller->setMode(BalanceMode::RECOVER);
+    }
+    else
+    {
+      controller->setMode(BalanceMode::STAND_UP);
+    }
     ROS_INFO("[balance] Exit SIT_DOWN");
   }
 }
