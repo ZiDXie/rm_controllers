@@ -13,6 +13,7 @@
 #include <rm_msgs/LeggedUpstairStatus.h>
 #include <rm_common/filters/kalman_filter.h>
 #include <rm_common/filters/lp_filter.h>
+#include <rm_common/DebugDataPublisher.h>
 #include <control_toolbox/pid.h>
 #include <controller_interface/multi_interface_controller.h>
 #include <geometry_msgs/TwistStamped.h>
@@ -62,11 +63,11 @@ public:
   int getBaseState() const{ return state_; }
   inline double getDefaultLegLength() const { return default_leg_length_;}
   geometry_msgs::Vector3 getVelCmd(){ return vel_cmd_; }
-  bool getMoveFlag() const{ return move_flag_; }
-  void setMoveFlag(const bool& move_flag) { move_flag_ = move_flag; }
+  inline bool getMoveFlag() const{ return move_flag_; }
+  inline void setMoveFlag(const bool& move_flag) { move_flag_ = move_flag; }
   inline VMCPtr& getVMCPtr() { return vmc_; }
-  void setStateChange(bool state){ balance_state_changed_ = state; }
-  void setCompleteStand(bool state){ complete_stand_ = state; }
+  inline void setStateChange(bool state){ balance_state_changed_ = state; }
+  inline void setCompleteStand(bool state){ complete_stand_ = state; }
   void setJumpCmd(bool cmd){ jumpCmd_ = cmd; }
   void setMode(int mode){ balance_mode_ = mode; }
   inline void clearRecoveryFlag() { overturn_ = false; }
@@ -76,6 +77,7 @@ public:
                     Eigen::Matrix<double, CONTROL_DIM, 1> u_left, Eigen::Matrix<double, CONTROL_DIM, 1> u_right,
                     Eigen::Matrix<double, CONTROL_DIM, 1> F_leg_, const bool unstick[2]) const;
   void pubLegLenStatus(const bool& upstair_flag);
+  double f_spring_force(double L0);
   // clang-format on
   void clearStatus();
 
@@ -114,17 +116,15 @@ private:
   Eigen::Matrix<double, 2, 2> A_, B_, H_, Q_, R_;
   Eigen::Matrix<double, 2, 1> X_, U_;
   std::shared_ptr<KalmanFilter<double>> kalmanFilterPtr_;
-  std::shared_ptr<LowPassFilter> left_leg_angle_lpFilterPtr_, right_leg_angle_lpFilterPtr_,
-      left_leg_angle_vel_lpFilterPtr_, right_leg_angle_vel_lpFilterPtr_;
 
   Eigen::Matrix<double, STATE_DIM, 1> x_left_{}, x_right_{};
-  double default_leg_length_{ 0.2 };
+  double default_leg_length_{ 0.13 };
   bool move_flag_{ false };
   // stand up
   bool complete_stand_ = false, overturn_ = false;
 
   // handles
-  hardware_interface::ImuSensorHandle imu_handle_;
+  hardware_interface::ImuSensorHandle imu_handle_, gimbal_imu_handle_;
   hardware_interface::JointHandle left_wheel_joint_handle_, right_wheel_joint_handle_;
   hardware_interface::JointHandle left_hip_joint_handle_, left_knee_joint_handle_, right_hip_joint_handle_,
       right_knee_joint_handle_;
@@ -145,5 +145,6 @@ private:
   std::shared_ptr<realtime_tools::RealtimePublisher<rm_msgs::LeggedChassisMode>> legged_chassis_mode_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<rm_msgs::LeggedLQRStatus>> lqr_status_pub_;
   ros::Time cmd_update_time_;
+  std::shared_ptr<DebugDataPublisher> debugPub_;
 };
 }  // namespace rm_chassis_controllers
