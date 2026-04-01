@@ -53,6 +53,43 @@ public:
    */
   void leg_conv(double F, double Tp, double phi1, double phi4, double T[2]);
 
+  /**
+   * @brief Convert joint torques back to Cartesian/Virtual forces.
+   *
+   * This function performs the inverse mapping of leg_conv, converting the torques
+   * applied at the joints (T1, T2) into the equivalent virtual forces acting on
+   * the leg end-effector in polar coordinates.
+   *
+   * @param T1    Torque applied to the first joint (e.g., hip/thigh).
+   * @param T2    Torque applied to the second joint (e.g., knee/calf).
+   * @param phi1  Current position of the first joint.
+   * @param phi4  Current position of the second joint.
+   * @param F     Output array where F[0] is the radial force (along the leg length L0)
+   *              and F[1] is the tangential force or torque (perpendicular to L0).
+   */
+  void leg_conv_t(double T1, double T2, double phi1, double phi4, double F[2]);
+
+  inline double getL1() const
+  {
+    return l1_;
+  }
+  inline double getL2() const
+  {
+    return l2_;
+  }
+  inline double getL3() const
+  {
+    return l3_;
+  }
+  inline double getL4() const
+  {
+    return l4_;
+  }
+  inline double getL5() const
+  {
+    return l5_;
+  }
+
 private:
   /**
    * @brief Calculate the Jacobian matrix of the leg mechanism.
