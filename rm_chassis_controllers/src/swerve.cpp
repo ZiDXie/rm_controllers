@@ -309,26 +309,19 @@ void SwerveController::updatePowerStatus()
   }
   wheel_power_limitor_.power_sum = cwheel_power;
 
-  if (epivot_power_pub_->trylock())
-  {
-    epivot_power_pub_->msg_.data = epivot_power;
-    epivot_power_pub_->unlockAndPublish();
-  }
-  if (cpivot_power_pub_->trylock())
-  {
-    cpivot_power_pub_->msg_.data = cpivot_power;
-    cpivot_power_pub_->unlockAndPublish();
-  }
-  if (ewheel_power_pub_->trylock())
-  {
-    ewheel_power_pub_->msg_.data = ewheel_power;
-    ewheel_power_pub_->unlockAndPublish();
-  }
-  if (cwheel_power_pub_->trylock())
-  {
-    cwheel_power_pub_->msg_.data = cwheel_power;
-    cwheel_power_pub_->unlockAndPublish();
-  }
+  // Publish power status.
+  auto publishPower = [](auto& pub, const double power) {
+    if (pub && pub->trylock())
+    {
+      pub->msg_.data = power;
+      pub->unlockAndPublish();
+    }
+  };
+
+  publishPower(epivot_power_pub_, epivot_power);
+  publishPower(cpivot_power_pub_, cpivot_power);
+  publishPower(ewheel_power_pub_, ewheel_power);
+  publishPower(cwheel_power_pub_, cwheel_power);
 }
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)
