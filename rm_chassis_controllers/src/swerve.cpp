@@ -210,7 +210,8 @@ void SwerveController::powerLimit()
   // Set command limit according to power limit.
   if (pivot_power_limitor_.power_sum > pivot_power_limitor_.max_power)
   {
-    for (int i = 0; i < pivot_joint_handles_.size() && i < 4; ++i)
+    const size_t pivot_count = std::min<size_t>(pivot_joint_handles_.size(), 4);
+    for (size_t i = 0; i < pivot_count; ++i)
     {
       auto& joint = pivot_joint_handles_[i];
       double A = pivot_power_limitor_.effort_coeff;
@@ -236,7 +237,8 @@ void SwerveController::powerLimit()
   }
   if (wheel_power_limitor_.power_sum > wheel_power_limitor_.max_power)
   {
-    for (int i = 0; i < wheel_joint_handles_.size() && i < 4; ++i)
+    const size_t wheel_count = std::min<size_t>(wheel_joint_handles_.size(), 4);
+    for (size_t i = 0; i < wheel_count; ++i)
     {
       auto& joint = wheel_joint_handles_[i];
       double A = wheel_power_limitor_.effort_coeff;
@@ -293,7 +295,8 @@ void SwerveController::updatePowerStatus()
                            .power_offset = power_config.power_offset,
                            .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum) };
   double ewheel_power{}, cwheel_power{};
-  for (int i = 0; i < wheel_joint_handles_.size() && i < 4; ++i)
+  const size_t wheel_count = std::min<size_t>(wheel_joint_handles_.size(), 4);
+  for (size_t i = 0; i < wheel_count; ++i)
   {
     const auto& joint = wheel_joint_handles_[i];
 

@@ -47,6 +47,7 @@
 #include <geometry_msgs/TwistStamped.h>
 #include <geometry_msgs/Vector3Stamped.h>
 #include <nav_msgs/Odometry.h>
+#include <rm_msgs/ChassisActiveSusCmd.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <rm_common/ros_utilities.h>
 #include <rm_common/math_utilities.h>
@@ -67,6 +68,7 @@ struct Command
 {
   geometry_msgs::Twist cmd_vel_;
   rm_msgs::ChassisCmd cmd_chassis_;
+  rm_msgs::ChassisActiveSusCmd cmd_active_sus_;
   ros::Time stamp_;
 };
 
@@ -132,7 +134,7 @@ protected:
    * @param time The current time.
    * @param period The time passed since the last call to update.
    */
-  void follow(const ros::Time& time, const ros::Duration& period);
+  virtual void follow(const ros::Time& time, const ros::Duration& period);
   /** @brief The mode TWIST: Just moving chassis.
    *
    * The mode TWIST: Chassis will move independent and will not effect by gimbal's move.

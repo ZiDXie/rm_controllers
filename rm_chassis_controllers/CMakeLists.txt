@@ -27,6 +27,7 @@ find_package(catkin REQUIRED
 find_package(Eigen3 REQUIRED)
 
 generate_dynamic_reconfigure_options(
+  cfg/LQRWeight.cfg
   cfg/PowerLimit.cfg
 )
 
@@ -64,8 +65,14 @@ catkin_package(
 ## Specify additional locations of header files
 include_directories(
         include
+        include/rm_chassis_controllers
         ${catkin_INCLUDE_DIRS}
         ${EIGEN3_INCLUDE_DIR}
+)
+
+file(GLOB_RECURSE BIPEDAL_SOURCES
+        "src/bipedal_wheel_controller/*.cpp"
+        "src/bipedal_wheel_controller/*.c"
 )
 
 ## Declare cpp executables
@@ -75,12 +82,16 @@ add_library(${PROJECT_NAME}
         src/sentry.cpp
         src/swerve.cpp
         src/balance.cpp
+        src/active_suspension.cpp
+        ${BIPEDAL_SOURCES}
 )
 
 ## Specify libraries to link executable targets against
 target_link_libraries(${PROJECT_NAME}
         ${catkin_LIBRARIES}
 )
+
+add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg)
 
 #############
 ## Install ##
