@@ -31,18 +31,18 @@ void StandUp::execute(BipedalController* controller, const ros::Time& time, cons
   auto model_params_ = controller->getModelParams();
   spring_force_ = -model_params_->f_spring;
   LegCommand left_cmd = { 0, 0, { 0., 0. } }, right_cmd = { 0, 0, { 0., 0. } };
-  setUpLegMotion(x_left_, right_leg_state, left_pos_[0], left_pos_[1], left_leg_state, theta_des_l, length_des_l,
-                 left_stop_);
-  setUpLegMotion(x_right_, left_leg_state, right_pos_[0], right_pos_[1], right_leg_state, theta_des_r, length_des_r,
+  setUpLegMotion(x_left_, right_leg_state, left_pos_[0], left_pos_[1], left_leg_state, left_leg_command_, left_stop_);
+  setUpLegMotion(x_right_, left_leg_state, right_pos_[0], right_pos_[1], right_leg_state, right_leg_command_,
                  right_stop_);
+
   if (!left_stop_)
   {
-    left_cmd = computePidLegCommand(length_des_l, theta_des_l, left_pos_, left_spd_, *pid_legs_[0], *pid_thetas_[0],
+    left_cmd = computePidLegCommand(left_leg_command_, left_pos_, left_spd_, *pid_legs_[0], *pid_thetas_[0],
                                     *pid_thetas_[2], left_angle_, left_leg_state, period, spring_force_);
   }
   if (!right_stop_)
   {
-    right_cmd = computePidLegCommand(length_des_r, theta_des_r, right_pos_, right_spd_, *pid_legs_[1], *pid_thetas_[1],
+    right_cmd = computePidLegCommand(right_leg_command_, right_pos_, right_spd_, *pid_legs_[1], *pid_thetas_[1],
                                      *pid_thetas_[3], right_angle_, right_leg_state, period, spring_force_);
   }
 
@@ -53,45 +53,73 @@ void StandUp::execute(BipedalController* controller, const ros::Time& time, cons
   //       (left_pos_[1] > -0.3 && left_leg_state == LegState::UNDER)) &&
   //      ((right_pos_[1] < 0.3 && right_leg_state == LegState::BEHIND) ||
   //       (right_pos_[1] > -0.3 && right_leg_state == LegState::UNDER)))
-  if (((left_pos_[1] < 0.3 && left_leg_state == LegState::BEHIND)) &&
-      ((right_pos_[1] < 0.3 && right_leg_state == LegState::BEHIND)))
+  if (((left_pos_[1] < 0.2 && left_leg_state == LegState::BEHIND)) &&
+      ((right_pos_[1] < 0.2 && right_leg_state == LegState::BEHIND)))
   {
     controller->setMode(BalanceMode::NORMAL);
+    controller->setStateChange(false);
+    ROS_INFO("[balance] Exit STAND_UP");
+  }
+  if (controller->getOverturn())
+  {
+    controller->setMode(BalanceMode::RECOVER);
     controller->setStateChange(false);
     ROS_INFO("[balance] Exit STAND_UP");
   }
 }
 
 void StandUp::setUpLegMotion(const Eigen::Matrix<double, STATE_DIM, 1>& x, const int& other_leg_state,
-                             const double& leg_length, const double& leg_theta, int& leg_state, double& theta_des,
-                             double& length_des, bool& stop_flag)
+                             const double& leg_length, const double& leg_theta, int& leg_state,
+                             StandUpLegCommand& legCommand, bool& stop_flag)
 {
   switch (leg_state)
   {
     case LegState::UNDER:
-      theta_des = -M_PI_2;
-      length_des = 0.36;
-      if (leg_length > 0.35)
+      stop_flag = false;
+      legCommand.desired_angle = -M_PI_2;
+      legCommand.desired_length = 0.36;
+      if (leg_length > 0.33)
       {
         leg_state = LegState::FRONT;
       }
       break;
     case LegState::FRONT:
-      theta_des = M_PI_2 - 0.35;
-      length_des = 0.36;
-      if ((abs(x[1]) < 0.5 && x[0] > 0))
-        leg_state = LegState::BEHIND;
+      stop_flag = false;
+      legCommand.desired_angle = M_PI_2 - 0.35;
+      legCommand.desired_length = 0.36;
+      legCommand.desired_angle_vel = -5.0;
+      if (abs(legCommand.desired_angle - leg_theta) < 0.4)
+      {
+        legCommand.desired_angle_vel = -1.0;
+      }
+      if (abs(x[1]) < 0.2)
+      {
+        if (x[0] > 0 && x[0] < M_PI_2)
+        {
+          leg_state = LegState::BEHIND;
+        }
+      }
       break;
     case LegState::BEHIND:
       stop_flag = true;
-      theta_des = leg_theta;
-      length_des = leg_length;
-      if (other_leg_state != LegState::FRONT)
+      legCommand.desired_angle = leg_theta;
+      legCommand.desired_length = leg_length;
+      if (other_leg_state == LegState::BEHIND)
       {
         stop_flag = false;
-        length_des = 0.18;
-        if (leg_length < 0.21)
-          theta_des = -0.1;
+        double h = 0.125;
+        //        legCommand.desired_length = 0.12;
+        //        legCommand.desired_angle = acos(h / leg_length);
+        legCommand.desired_length = h / cos(leg_theta);
+        legCommand.desired_angle = 0.0;
+        //        legCommand.desired_length = 0.18;
+        //        if (leg_length < 0.3)
+        //        {
+        //          if (leg_theta < M_PI_2)
+        //            legCommand.desired_angle = 0.3;
+        //        }
+        //        if (leg_length < 0.15)
+        //          legCommand.desired_angle = 0.0;
       }
       break;
   }
@@ -125,23 +153,23 @@ inline void StandUp::detectLegState(const Eigen::Matrix<double, STATE_DIM, 1>& x
   }
 }
 
-inline LegCommand StandUp::computePidLegCommand(double desired_length, double desired_angle, double leg_pos[2],
+inline LegCommand StandUp::computePidLegCommand(const StandUpLegCommand& leg_command, double leg_pos[2],
                                                 double leg_spd[2], control_toolbox::Pid& length_pid,
                                                 control_toolbox::Pid& angle_pid, control_toolbox::Pid& angle_vel_pid,
                                                 const double* leg_angle, const int& leg_state,
                                                 const ros::Duration& period, double feedforward_force)
 {
   LegCommand cmd{ 0.0, 0.0, { 0.0, 0.0 } };
-  cmd.force = length_pid.computeCommand(desired_length - leg_pos[0], period) + feedforward_force;
+  cmd.force = length_pid.computeCommand(leg_command.desired_length - leg_pos[0], period) + feedforward_force;
   cmd.force = abs(cmd.force) > 250 ? std::copysign(1, cmd.force) * 250 : cmd.force;
   if (leg_state == LegState::BEHIND || leg_state == LegState::UNDER)
   {
-    cmd.torque = angle_pid.computeCommand(-angles::shortest_angular_distance(desired_angle, leg_pos[1]), period);
+    cmd.torque =
+        angle_pid.computeCommand(-angles::shortest_angular_distance(leg_command.desired_angle, leg_pos[1]), period);
   }
   else
   {
-    //    double cmd_leg_angle_vel = -5 * (angles::shortest_angular_distance(desired_angle, leg_pos[1]) - 0.5);
-    cmd.torque = angle_vel_pid.computeCommand(-5 - leg_spd[1], period);
+    cmd.torque = angle_vel_pid.computeCommand(leg_command.desired_angle_vel - leg_spd[1], period);
   }
   vmcPtr_->leg_conv(cmd.force, cmd.torque, leg_angle[0], leg_angle[1], cmd.input);
   return cmd;

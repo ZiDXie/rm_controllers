@@ -15,6 +15,13 @@ namespace rm_chassis_controllers
 {
 class StandUp : public ModeBase
 {
+  struct StandUpLegCommand
+  {
+    double desired_length;
+    double desired_angle;
+    double desired_angle_vel;
+  };
+
 public:
   StandUp(const std::vector<hardware_interface::JointHandle*>& joint_handles,
           const std::vector<control_toolbox::Pid*>& pid_legs, const std::vector<control_toolbox::Pid*>& pid_thetas);
@@ -26,8 +33,8 @@ public:
 
 private:
   void setUpLegMotion(const Eigen::Matrix<double, STATE_DIM, 1>& x, const int& other_leg_state,
-                      const double& leg_length, const double& leg_theta, int& leg_state, double& theta_des,
-                      double& length_des, bool& stop_flag);
+                      const double& leg_length, const double& leg_theta, int& leg_state, StandUpLegCommand& legCommand,
+                      bool& stop_flag);
   /**
    * Detect the leg state before stand up: UNDER, FRONT, BEHIND
    * @param x
@@ -47,16 +54,17 @@ private:
    * @param feedforward_force
    * @return
    */
-  inline LegCommand computePidLegCommand(double desired_length, double desired_angle, double leg_pos[2],
-                                         double leg_spd[2], control_toolbox::Pid& length_pid,
-                                         control_toolbox::Pid& angle_pid, control_toolbox::Pid& angle_vel_pid,
-                                         const double* leg_angle, const int& leg_state, const ros::Duration& period,
+  inline LegCommand computePidLegCommand(const StandUpLegCommand& leg_command, double leg_pos[2], double leg_spd[2],
+                                         control_toolbox::Pid& length_pid, control_toolbox::Pid& angle_pid,
+                                         control_toolbox::Pid& angle_vel_pid, const double* leg_angle,
+                                         const int& leg_state, const ros::Duration& period,
                                          double feedforward_force = 0.0f);
   std::vector<hardware_interface::JointHandle*> joint_handles_;
   std::vector<control_toolbox::Pid*> pid_legs_, pid_thetas_;
   int left_leg_state, right_leg_state;
   double theta_des_l, theta_des_r, length_des_l, length_des_r;
   double spring_force_{};
+  StandUpLegCommand left_leg_command_, right_leg_command_;
   bool left_stop_{ false }, right_stop_{ false };
   std::shared_ptr<LegStateThresholdParams> leg_state_threshold_;
   VMCPtr vmcPtr_;
