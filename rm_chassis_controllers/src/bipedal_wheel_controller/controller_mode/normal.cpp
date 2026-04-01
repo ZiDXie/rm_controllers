@@ -28,23 +28,37 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
     ROS_INFO("[balance] Enter NORMAL");
     controller->clearStatus();
     jump_phase_ = JumpPhase::IDLE;
-    pos_des_ = 0;
+    pos_des_ = bias_params_->x;
     controller->setStateChange(true);
   }
 
-  if (!controller->getCompleteStand() && abs(x_left_[4]) < 0.2 && (abs(x_left_[0] + x_right_[0]) / 2.0f) < 0.15)
+  if (abs(x_left_[4]) < 0.2 && (abs(x_left_[0] + x_right_[0]) / 2.0f) < 0.15)
   {
-    controller->setCompleteStand(true);
+    protect_flag_ = false;
+    if (!controller->getCompleteStand())
+    {
+      controller->setCompleteStand(true);
+    }
   }
 
   auto vel_cmd_ = controller->getVelCmd();
-  if (controller->getMoveFlag() && abs(x_left_[3]) < 0.1 && abs(vel_cmd_.x) < 0.1)
+  double current_leg_length = (left_pos_[0] + right_pos_[0]) / 2.0f;
+  if (abs(x_left_[3]) < 0.1 && abs(vel_cmd_.x) < 0.1)
   {
     controller->setMoveFlag(false);
+    if (x_offset_flag_)
+    {
+      x_offset_flag_ = false;
+      pos_des_ = current_leg_length * sin(-(x_left_(0) + x_right_(0)) / 2.0f) + bias_params_->x;
+    }
+  }
+  if (controller->getMoveFlag())
+  {
+    x_offset_flag_ = true;
   }
 
   double friction_circle = x_left_(3) * angular_vel_base_.z;
-  double friction_circle_alpha = abs(friction_circle) > 3.5f ? (3.5f / abs(friction_circle)) : 1.0f;
+  double friction_circle_alpha = abs(friction_circle) > 3.75f ? (3.75f / abs(friction_circle)) : 1.0f;
   // PID
   double T_yaw = pid_yaw_vel_->computeCommand(friction_circle_alpha * vel_cmd_.z - angular_vel_base_.z, period);
   double T_theta_diff = pid_theta_diff_->computeCommand(right_pos_[1] - left_pos_[1], period);
@@ -78,12 +92,20 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
 
   if (controller->getCompleteStand())
   {
-    x_left_ref(2) = x_right_ref(2) = pos_des_;
-    x_left_ref(3) = x_right_ref(3) = friction_circle_alpha * vel_cmd_.x;
-    leg_length_des = controller->getLegCmd();
+    if (controller->getBaseState() != rm_msgs::ChassisCmd::RAW)
+    {
+      x_left_ref(2) = x_right_ref(2) = pos_des_;
+      x_left_ref(3) = x_right_ref(3) = friction_circle_alpha * vel_cmd_.x;
+    }
+    else
+    {
+      x_left_ref(2) = x_right_ref(2) = 0.0f;
+      x_left_ref(3) = x_right_ref(3) = 0.0f;
+    }
+    leg_length_des = protect_flag_ ? controller->getDefaultLegLength() : controller->getLegCmd();
   }
-  x_left(0) -= bias_params_->theta;
-  x_right(0) -= bias_params_->theta;
+  x_left(0) -= controller->getBaseState() != rm_msgs::ChassisCmd::RAW ? bias_params_->theta : bias_params_->raw_theta;
+  x_right(0) -= controller->getBaseState() != rm_msgs::ChassisCmd::RAW ? bias_params_->theta : bias_params_->raw_theta;
   x_left(4) -= bias_params_->pitch;
   x_right(4) -= bias_params_->pitch;
 
@@ -97,8 +119,10 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
   auto model_params_ = controller->getModelParams();
   auto control_params_ = controller->getControlParams();
   //  auto f_spring_force = [](double l) { return ((2094.45f * l - 3091.28f) * l + 1408.375f) * l - 80.91f; };
-  double gravity = model_params_->f_gravity, current_leg_length = (left_pos_[0] + right_pos_[0]) / 2.0f,
-         spring_force = model_params_->f_spring;
+  double gravity = model_params_->f_gravity,
+         //         left_spring_force = model_params_->f_spring, right_spring_force = model_params_->f_spring;
+      left_spring_force = controller->f_spring_force(left_pos_[0]),
+         right_spring_force = controller->f_spring_force(right_pos_[0]);
   double F_inertia = model_params_->M * friction_circle;
   Eigen::Matrix<double, 2, 1> F_leg;
 
@@ -117,8 +141,8 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
     double F_pid_right = pid_legs_[RIGHT]->computeCommand(right_length_des - current_leg_length, period);
     F_pid_left = abs(F_pid_left) > 150 ? std::copysign(1, F_pid_left) * 150 : F_pid_left;
     F_pid_right = abs(F_pid_right) > 150 ? std::copysign(1, F_pid_right) * 150 : F_pid_right;
-    F_leg[LEFT] = F_pid_left - F_inertia + gravity * cos(left_pos_[1]) + F_roll - spring_force;
-    F_leg[RIGHT] = F_pid_right + F_inertia + gravity * cos(right_pos_[1]) - F_roll - spring_force;
+    F_leg[LEFT] = F_pid_left - F_inertia + gravity / cos(left_pos_[1]) + F_roll - left_spring_force;
+    F_leg[RIGHT] = F_pid_right + F_inertia + gravity / cos(right_pos_[1]) - F_roll - right_spring_force;
   }
   else
   {
@@ -131,9 +155,9 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
       {
         ROS_INFO("[balance] ENTER LEG_RETRACTION");
         F_leg(LEFT) = pid_legs_[LEFT]->computeCommand(leg_length_des - current_leg_length, period) +
-                      gravity * cos(left_pos_[1]) + F_roll - spring_force;
+                      gravity / cos(left_pos_[1]) + F_roll - left_spring_force;
         F_leg(RIGHT) = pid_legs_[RIGHT]->computeCommand(leg_length_des - current_leg_length, period) +
-                       gravity * cos(left_pos_[1]) - F_roll - spring_force;
+                       gravity / cos(left_pos_[1]) - F_roll - right_spring_force;
         if (current_leg_length < leg_length_des + 0.01)
         {
           jumpTime_++;
@@ -234,8 +258,8 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
 
   // upstairs
   if (jump_phase_ == JumpPhase::IDLE && linear_acc_base_.z < -7.0 && controller->getCompleteStand() &&
-      abs(vel_cmd_.x) > 0.1 && abs(x_left(3)) > 0.1 && ((left_pos_[0] + right_pos_[0]) / 2.0f) > 0.3 &&
-      leg_length_des > 0.30)
+      abs(vel_cmd_.x) > 0.1 && abs(x_left(3)) > 0.1 && ((left_pos_[0] + right_pos_[0]) / 2.0f) > 0.32 &&
+      leg_length_des > 0.32)
   {
     leg_length_des = controller->getDefaultLegLength();
     controller->setMode(BalanceMode::UPSTAIRS);
@@ -246,11 +270,17 @@ void Normal::execute(BipedalController* controller, const ros::Time& time, const
   }
 
   // Protection
-  if (abs(x_left(4)) > 0.6 || abs(x_left(0)) > 0.9 || abs(x_right(0)) > 0.9 || abs(roll_) > 1.0 ||
-      controller->getOverturn() || controller->getBaseState() == 4)
+  if (abs(x_left(0)) > 0.6 || abs(x_right(0)) > 0.6 || abs(pitch_) > 0.5 || abs(roll_) > 0.4)
+  {
+    protect_flag_ = true;
+  }
+
+  // Protection to sit_down
+  if (abs(x_left(0)) > 0.9 || abs(x_right(0)) > 0.9 || abs(roll_) > 1.0 || controller->getOverturn() ||
+      controller->getBaseState() == rm_msgs::ChassisCmd::FALLEN)
   {
     leg_length_des = controller->getDefaultLegLength();
-    x_left_(2) = x_right_(2) = bias_params_->x;
+    x_left_(2) = x_right_(2) = 0;
     controller->setMode(BalanceMode::SIT_DOWN);
     controller->setStateChange(false);
     controller->setJumpCmd(false);

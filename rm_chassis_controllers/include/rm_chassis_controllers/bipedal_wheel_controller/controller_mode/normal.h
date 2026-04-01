@@ -43,6 +43,7 @@ private:
 
   double pos_des_{ 0.0 }, leg_length_des{ 0.2 };
   int jump_phase_ = JumpPhase::IDLE, jumpTime_{ 0 };
+  bool x_offset_flag_{ false }, protect_flag_{ false };
   std::shared_ptr<MovingAverageFilter<double>> leftSupportForceAveragePtr_, rightSupportForceAveragePtr_;
 };
 }  // namespace rm_chassis_controllers
