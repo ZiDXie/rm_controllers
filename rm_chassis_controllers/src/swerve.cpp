@@ -66,7 +66,7 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cwheel_power", 100);
   this->cwheel_power_pub_ = std::move(cwheel_power_publisher);
   auto epivot_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/pivot_power", 100);
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/epivot_power", 100);
   this->epivot_power_pub_ = std::move(epivot_power_publisher);
   auto cpivot_power_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cpivot_power", 100);
@@ -332,7 +332,7 @@ void SwerveController::updatePowerStatus()
   publishPower(cpivot_power_pub_, cpivot_power);
   publishPower(ewheel_power_pub_, ewheel_power);
   publishPower(cwheel_power_pub_, cwheel_power);
-}  // namespace rm_chassis_controllers
+}
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)
 }  // namespace rm_chassis_controllers
