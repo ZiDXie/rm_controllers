@@ -210,10 +210,10 @@ void SwerveController::powerLimit()
   // Set command limit according to power limit.
   if (pivot_power_limitor_.power_sum > pivot_power_limitor_.max_power)
   {
-    const size_t pivot_count = std::min<size_t>(pivot_joint_handles_.size(), 4);
-    for (size_t i = 0; i < pivot_count; ++i)
+    for (size_t i = 0; i < modules_.size() && i < 4; ++i)
     {
-      auto& joint = pivot_joint_handles_[i];
+      auto& module = modules_[i];
+      auto& joint = module.ctrl_pivot_->joint_;
       double A = pivot_power_limitor_.effort_coeff;
       double B = pivot_power_limitor_.omiga[i] / 9.55f;
       double C = square(pivot_power_limitor_.omiga[i]) * pivot_power_limitor_.vel_coeff +
@@ -237,10 +237,10 @@ void SwerveController::powerLimit()
   }
   if (wheel_power_limitor_.power_sum > wheel_power_limitor_.max_power)
   {
-    const size_t wheel_count = std::min<size_t>(wheel_joint_handles_.size(), 4);
-    for (size_t i = 0; i < wheel_count; ++i)
+    for (size_t i = 0; i < modules_.size() && i < 4; ++i)
     {
-      auto& joint = wheel_joint_handles_[i];
+      auto& module = modules_[i];
+      auto& joint = module.ctrl_wheel_->joint_;
       double A = wheel_power_limitor_.effort_coeff;
       double B = wheel_power_limitor_.omiga[i] / 9.55f;
       double C = square(wheel_power_limitor_.omiga[i]) * wheel_power_limitor_.vel_coeff +
@@ -251,7 +251,9 @@ void SwerveController::powerLimit()
       if (Delta >= 0)
       {
         double Sqrt = sqrtf(Delta);
-        if (wheel_power_limitor_.torque[i] >= 0)
+        double cmd{};
+        module.ctrl_wheel_->getCommand(cmd);
+        if (cmd >= 0)
           joint.setCommand((-B + Sqrt) / (2 * A));
         else
           joint.setCommand((-B - Sqrt) / (2 * A));
