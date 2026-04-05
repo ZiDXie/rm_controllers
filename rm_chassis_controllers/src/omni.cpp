@@ -77,5 +77,108 @@ geometry_msgs::Twist OmniController::odometry()
   return twist;
 }
 
+void OmniController::powerLimit()
+{
+  updatePowerStatus();
+  // multiply K to limit power for wheel joints.
+  if (wheel_power_limitor_.err_sum > wheel_power_limitor_.err_upper)
+  {
+    wheel_power_limitor_.K = 1;
+  }
+  else if (wheel_power_limitor_.err_sum < wheel_power_limitor_.err_lower)
+  {
+    wheel_power_limitor_.K = 0;
+  }
+  else
+  {
+    wheel_power_limitor_.K = 1 - (wheel_power_limitor_.err_sum - wheel_power_limitor_.err_lower) /
+                                     (wheel_power_limitor_.err_upper - wheel_power_limitor_.err_lower);
+  }
+  // Set power limit to each joint according to K.
+  for (int i = 0; i < 4; i++)
+  {
+    double wheel_zoom =
+        (wheel_power_limitor_.K * abs(wheel_power_limitor_.err[i]) / wheel_power_limitor_.err_sum) +
+        (1 - wheel_power_limitor_.K) * (abs(wheel_power_limitor_.power_in[i]) / wheel_power_limitor_.power_sum);
+    wheel_zoom = limit(wheel_zoom, 0.0, 1.0);
+    wheel_power_limitor_.power_limit[i] = wheel_zoom * wheel_power_limitor_.max_power;
+  }
+  if (wheel_power_limitor_.power_sum > wheel_power_limitor_.max_power)
+  {
+    for (size_t i = 0; i < joints_.size() && i < 4; ++i)
+    {
+      auto& ctl = joints_[i];
+      auto& joint = ctl->joint_;
+      double A = wheel_power_limitor_.effort_coeff;
+      double B = wheel_power_limitor_.omiga[i] / 9.55f;
+      double C = square(wheel_power_limitor_.omiga[i]) * wheel_power_limitor_.vel_coeff +
+                 wheel_power_limitor_.power_offset - wheel_power_limitor_.power_limit[i];
+      double Delta = square(B) - 4 * A * C;
+      if (!std::isfinite(Delta) || Delta < 0.0)
+        Delta = 0.0;
+      if (Delta >= 0)
+      {
+        double Sqrt = sqrtf(Delta);
+        double cmd{};
+        ctl->getCommand(cmd);
+        if (cmd >= 0)
+          joint.setCommand((-B + Sqrt) / (2 * A));
+        else
+          joint.setCommand((-B - Sqrt) / (2 * A));
+      }
+      else
+      {
+        joint.setCommand((-B) / (2 * A));
+      }
+    }
+  }
+}
+
+void OmniController::updatePowerStatus()
+{
+  double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
+  const auto& power_config = *power_limit_rt_buffer_.readFromRT();
+
+  wheel_power_limitor_ = {
+    .vel_coeff = power_config.vel_coeff,
+    .effort_coeff = power_config.effort_coeff,
+    .power_offset = power_config.power_offset,
+    .max_power = power_limit,
+    .err_upper = 500,
+    .err_lower = 0.001,
+  };
+
+  double ewheel_power{}, cwheel_power{};
+  for (size_t i = 0; i < joints_.size() && i < 4; ++i)
+  {
+    auto& ctl = joints_[i];
+    double cmd_torque = wheel_power_limitor_.torque[i] = ctl->joint_.getCommand();
+    double cmd_vel{};
+    ctl->getCommand(cmd_vel);
+    double real_vel = wheel_power_limitor_.omiga[i] = ctl->joint_.getVelocity();
+    double real_torque = ctl->joint_.getEffort();
+    wheel_power_limitor_.err[i] = cmd_vel - real_vel;
+    wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
+    wheel_power_limitor_.power_in[i] = real_torque * real_vel / 9.55f +
+                                       wheel_power_limitor_.effort_coeff * square(real_torque) +
+                                       wheel_power_limitor_.vel_coeff * square(real_vel);
+    ewheel_power += wheel_power_limitor_.power_in[i];
+    cwheel_power += cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
+  }
+  wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
+
+  // Publish power status.
+  auto publishPower = [](auto& pub, const double power) {
+    if (pub && pub->trylock())
+    {
+      pub->msg_.data = power;
+      pub->unlockAndPublish();
+    }
+  };
+  publishPower(ewheel_power_pub_, ewheel_power);
+  publishPower(cwheel_power_pub_, cwheel_power);
+}
+
 }  // namespace rm_chassis_controllers
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::OmniController, controller_interface::ControllerBase)
