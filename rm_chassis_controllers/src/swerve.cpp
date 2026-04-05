@@ -319,7 +319,7 @@ void SwerveController::updatePowerStatus()
     cwheel_power += cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
                     wheel_power_limitor_.vel_coeff * square(real_vel);
   }
-  wheel_power_limitor_.power_sum = cwheel_power + wheel_power_limitor_.power_offset;
+  wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
 
   // Publish power status.
   auto publishPower = [](auto& pub, const double power) {
