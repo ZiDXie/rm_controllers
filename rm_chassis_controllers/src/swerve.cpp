@@ -227,7 +227,7 @@ void SwerveController::powerLimit()
         if (pivot_power_limitor_.torque[i] >= 0)
           joint.setCommand((-B + Sqrt) / (2 * A));
         else
-          joint.setCommand((-B - Sqrt) / (2 * A));
+          joint.setCommand((-B + Sqrt) / (2 * A));
       }
       else
       {
@@ -281,21 +281,21 @@ void SwerveController::updatePowerStatus()
     double cmd_torque = pivot_power_limitor_.torque[i] = module.ctrl_pivot_->joint_.getCommand();
     double real_vel = pivot_power_limitor_.omiga[i] = module.ctrl_pivot_->joint_.getVelocity();
     double real_torque = module.ctrl_pivot_->joint_.getEffort();
-    pivot_power_limitor_.power_in[i] =
-        cmd_torque * real_vel / 9.55f + pivot_power_limitor_.effort_coeff * square(cmd_torque) +
-        pivot_power_limitor_.vel_coeff * square(real_vel) + pivot_power_limitor_.power_offset;
+    pivot_power_limitor_.power_in[i] = cmd_torque * real_vel / 9.55f +
+                                       pivot_power_limitor_.effort_coeff * square(cmd_torque) +
+                                       pivot_power_limitor_.vel_coeff * square(real_vel);
     epivot_power += real_torque * real_vel / 9.55f + pivot_power_limitor_.effort_coeff * square(real_torque) +
-                    pivot_power_limitor_.vel_coeff * square(real_vel) + pivot_power_limitor_.power_offset;
+                    pivot_power_limitor_.vel_coeff * square(real_vel);
     cpivot_power += pivot_power_limitor_.power_in[i];
   }
-  pivot_power_limitor_.power_sum = cpivot_power;
+  pivot_power_limitor_.power_sum = cpivot_power + pivot_power_limitor_.power_offset;
 
   wheel_power_limitor_ = {
     .vel_coeff = power_config.vel_coeff,
     .effort_coeff = power_config.effort_coeff,
     .power_offset = power_config.power_offset,
     .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum),
-    .err_upper = 4000,
+    .err_upper = 500,
     .err_lower = 0.001,
   };
 
@@ -310,14 +310,14 @@ void SwerveController::updatePowerStatus()
     double real_torque = module.ctrl_wheel_->joint_.getEffort();
     wheel_power_limitor_.err[i] = cmd_vel - real_vel;
     wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
-    wheel_power_limitor_.power_in[i] =
-        cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
-        wheel_power_limitor_.vel_coeff * square(real_vel) + wheel_power_limitor_.power_offset;
+    wheel_power_limitor_.power_in[i] = cmd_torque * real_vel / 9.55f +
+                                       wheel_power_limitor_.effort_coeff * square(cmd_torque) +
+                                       wheel_power_limitor_.vel_coeff * square(real_vel);
     ewheel_power += real_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(real_torque) +
-                    wheel_power_limitor_.vel_coeff * square(real_vel) + wheel_power_limitor_.power_offset;
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
     cwheel_power += wheel_power_limitor_.power_in[i];
   }
-  wheel_power_limitor_.power_sum = cwheel_power;
+  wheel_power_limitor_.power_sum = cwheel_power + wheel_power_limitor_.power_offset;
 
   // Publish power status.
   auto publishPower = [](auto& pub, const double power) {
