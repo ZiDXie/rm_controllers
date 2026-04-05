@@ -17,6 +17,13 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
 {
   ChassisBase::init(robot_hw, root_nh, controller_nh);
 
+  auto ewheel_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
+  this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
+  auto cwheel_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cwheel_power", 100);
+  this->cwheel_power_pub_ = std::move(cwheel_power_publisher);
+
   XmlRpc::XmlRpcValue wheels;
   controller_nh.getParam("wheels", wheels);
   chassis2joints_.resize(wheels.size(), 3);
@@ -144,8 +151,8 @@ void OmniController::updatePowerStatus()
     .effort_coeff = power_config.effort_coeff,
     .power_offset = power_config.power_offset,
     .max_power = power_limit,
-    .err_upper = 500,
-    .err_lower = 0.001,
+    .err_upper = 4000,
+    .err_lower = 10,
   };
 
   double ewheel_power{}, cwheel_power{};
