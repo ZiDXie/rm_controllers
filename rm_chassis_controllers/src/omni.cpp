@@ -20,9 +20,6 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
   auto ewheel_power_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
   this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
-  auto cwheel_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cwheel_power", 100);
-  this->cwheel_power_pub_ = std::move(cwheel_power_publisher);
 
   XmlRpc::XmlRpcValue wheels;
   controller_nh.getParam("wheels", wheels);
@@ -117,9 +114,9 @@ void OmniController::powerLimit()
       auto& ctl = joints_[i];
       auto& joint = ctl->joint_;
       double A = wheel_power_limitor_.effort_coeff;
-      double B = wheel_power_limitor_.omiga[i] / 9.55f;
+      double B = wheel_power_limitor_.omiga[i];
       double C = square(wheel_power_limitor_.omiga[i]) * wheel_power_limitor_.vel_coeff +
-                 wheel_power_limitor_.power_offset - wheel_power_limitor_.power_limit[i];
+                 wheel_power_limitor_.power_offset / 4 - wheel_power_limitor_.power_limit[i];
       double Delta = square(B) - 4 * A * C;
       if (!std::isfinite(Delta) || Delta < 0.0)
         Delta = 0.0;
@@ -155,23 +152,21 @@ void OmniController::updatePowerStatus()
     .err_lower = 10,
   };
 
-  double ewheel_power{}, cwheel_power{};
+  double ewheel_power{};
   for (size_t i = 0; i < joints_.size() && i < 4; ++i)
   {
     auto& ctl = joints_[i];
-    double cmd_torque = wheel_power_limitor_.torque[i] = ctl->joint_.getCommand();
+    wheel_power_limitor_.torque[i] = ctl->joint_.getCommand();
     double cmd_vel{};
     ctl->getCommand(cmd_vel);
     double real_vel = wheel_power_limitor_.omiga[i] = ctl->joint_.getVelocity();
     double real_torque = ctl->joint_.getEffort();
     wheel_power_limitor_.err[i] = cmd_vel - real_vel;
     wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
-    wheel_power_limitor_.power_in[i] = real_torque * real_vel / 9.55f +
+    wheel_power_limitor_.power_in[i] = real_torque * real_vel +
                                        wheel_power_limitor_.effort_coeff * square(real_torque) +
                                        wheel_power_limitor_.vel_coeff * square(real_vel);
     ewheel_power += wheel_power_limitor_.power_in[i];
-    cwheel_power += cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
-                    wheel_power_limitor_.vel_coeff * square(real_vel);
   }
   wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
 
@@ -184,7 +179,6 @@ void OmniController::updatePowerStatus()
     }
   };
   publishPower(ewheel_power_pub_, ewheel_power);
-  publishPower(cwheel_power_pub_, cwheel_power);
 }
 
 }  // namespace rm_chassis_controllers

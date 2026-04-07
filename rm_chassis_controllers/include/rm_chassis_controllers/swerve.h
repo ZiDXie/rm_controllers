@@ -43,6 +43,11 @@
 #include <rm_msgs/PowerManagementSampleAndStatusData.h>
 #include <rm_common/eigen_types.h>
 #include <effort_controllers/joint_position_controller.h>
+#include <rm_common/filters/lp_filter.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <array>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 namespace rm_chassis_controllers
 {
@@ -54,7 +59,8 @@ struct Module
   effort_controllers::JointVelocityController* ctrl_wheel_;
 };
 
-class SwerveController : public ChassisBase<rm_control::RobotStateInterface, hardware_interface::EffortJointInterface>
+class SwerveController : public ChassisBase<rm_control::RobotStateInterface, hardware_interface::ImuSensorInterface,
+                                            hardware_interface::EffortJointInterface>
 {
 public:
   SwerveController() = default;
@@ -66,13 +72,15 @@ private:
   void powerLimit() override;
   void updatePowerStatus() override;
   void getBaseGyro();
+  double stateJudge(double vel_angle);
 
   std::vector<Module> modules_{};
   std::vector<hardware_interface::JointHandle> pivot_joint_handles_{};
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> epivot_power_pub_;
-  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> cpivot_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::Vector3Stamped>> base_gyro_pub_;
 
   PowerLimitor pivot_power_limitor_{};
+  std::array<std::array<LowPassFilter*, 4>, 2> motor_lp_filters_{};
 
   bool has_gimbal_imu_{ false };
   hardware_interface::ImuSensorHandle imu_handle_{};

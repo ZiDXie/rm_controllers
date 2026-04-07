@@ -48,29 +48,40 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
   if (!ChassisBase::init(robot_hw, root_nh, controller_nh))
     return false;
 
-  auto* imu_handle = robot_hw->get<hardware_interface::ImuSensorInterface>();
-  if (imu_handle == nullptr)
-  {
-    ROS_WARN("SwerveController requires gimbal_imu");
-  }
+  auto* imu_iface = robot_hw->get<hardware_interface::ImuSensorInterface>();
+  if (!imu_iface)
+    ROS_WARN("SwerveController cannot get ImuSensorInterface");
   else
   {
-    imu_handle_ = imu_handle->getHandle("gimbal_imu");
-    has_gimbal_imu_ = true;
+    try
+    {
+      imu_handle_ = imu_iface->getHandle(getParam(controller_nh, "imu_name", std::string("gimbal_imu")));
+      has_gimbal_imu_ = true;
+      ROS_INFO_STREAM("SwerveController imu_name: " << imu_handle_.getName());
+    }
+    catch (const hardware_interface::HardwareInterfaceException& e)
+    {
+      has_gimbal_imu_ = false;
+      ROS_WARN_STREAM("SwerveController cannot get imu handle: " << e.what());
+    }
+  }
+
+  // 0 for pivot, 1 for wheel. Each module has 4 joints at most.
+  for (auto& filter_group : motor_lp_filters_)
+  {
+    for (auto& filter : filter_group)
+      filter = new LowPassFilter(20);
   }
 
   auto ewheel_power_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
   this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
-  auto cwheel_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cwheel_power", 100);
-  this->cwheel_power_pub_ = std::move(cwheel_power_publisher);
   auto epivot_power_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/epivot_power", 100);
   this->epivot_power_pub_ = std::move(epivot_power_publisher);
-  auto cpivot_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/cpivot_power", 100);
-  this->cpivot_power_pub_ = std::move(cpivot_power_publisher);
+  auto base_gyro_publisher = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::Vector3Stamped>>(
+      controller_nh, "base_gyro", 100);
+  this->base_gyro_pub_ = std::move(base_gyro_publisher);
 
   XmlRpc::XmlRpcValue modules;
   controller_nh.getParam("modules", modules);
@@ -116,6 +127,8 @@ void SwerveController::moveJoint(const ros::Time& time, const ros::Duration& per
   {
     Vec2<double> vel = vel_center + vel_cmd_.z * Vec2<double>(-module.position_.y(), module.position_.x());
     double vel_angle = std::atan2(vel.y(), vel.x()) + module.pivot_offset_;
+    // Judge for flying slope.
+    // vel_angle = stateJudge(vel_angle);
     // Direction flipping and Stray module mitigation
     double a = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle);
     double b = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle + M_PI);
@@ -154,24 +167,35 @@ geometry_msgs::Twist SwerveController::odometry()
 
 void SwerveController::getBaseGyro()
 {
-  // Todo: because swerve don't have chassis imu, we use gimbal imu to get chassis gyro. This is not good because of the
-  // gimbal's rotation. A better solution is to install an imu on the chassis.
+  // Todo:use base_imu to detect real base_gyro
   if (has_gimbal_imu_)
   {
     geometry_msgs::Vector3 imu_gyro{};
     imu_gyro.x = imu_handle_.getAngularVelocity()[0];
     imu_gyro.y = imu_handle_.getAngularVelocity()[1];
     imu_gyro.z = imu_handle_.getAngularVelocity()[2];
-    try
+
+    // Publish base_gyro.
+    if (base_gyro_pub_ && base_gyro_pub_->trylock())
     {
-      tf2::doTransform(imu_gyro, base_gyro_,
-                       robot_state_handle_.lookupTransform("base_link", imu_handle_.getFrameId(), ros::Time(0)));
-    }
-    catch (tf2::TransformException& ex)
-    {
-      ROS_WARN_THROTTLE(1.0, "%s", ex.what());
+      base_gyro_pub_->msg_.header.stamp = ros::Time::now();
+      base_gyro_pub_->msg_.header.frame_id = "base_link";
+      base_gyro_pub_->msg_.vector = base_gyro_;
+      base_gyro_pub_->unlockAndPublish();
     }
   }
+}
+
+double SwerveController::stateJudge(double vel_angle)
+{
+  // Check for flying slope state based on gyro angular velocity (Roll and Pitch)
+  if (fabs(base_gyro_.y) > 1.5)
+  // Flying slope state,set pivot to 0
+  {
+    return 0;
+  }
+  else
+    return vel_angle;
 }
 
 // Ref: https://gitee.com/cod_-control/rmcod2026_-sentry/tree/dev
@@ -215,9 +239,9 @@ void SwerveController::powerLimit()
       auto& module = modules_[i];
       auto& joint = module.ctrl_pivot_->joint_;
       double A = pivot_power_limitor_.effort_coeff;
-      double B = pivot_power_limitor_.omiga[i] / 9.55f;
+      double B = pivot_power_limitor_.omiga[i];
       double C = square(pivot_power_limitor_.omiga[i]) * pivot_power_limitor_.vel_coeff +
-                 pivot_power_limitor_.power_offset - pivot_power_limitor_.power_limit[i];
+                 pivot_power_limitor_.power_offset / 4 - pivot_power_limitor_.power_limit[i];
       double Delta = square(B) - 4 * A * C;
       if (!std::isfinite(Delta) || Delta < 0.0)
         Delta = 0.0;
@@ -227,7 +251,7 @@ void SwerveController::powerLimit()
         if (pivot_power_limitor_.torque[i] >= 0)
           joint.setCommand((-B + Sqrt) / (2 * A));
         else
-          joint.setCommand((-B + Sqrt) / (2 * A));
+          joint.setCommand((-B - Sqrt) / (2 * A));
       }
       else
       {
@@ -242,18 +266,16 @@ void SwerveController::powerLimit()
       auto& module = modules_[i];
       auto& joint = module.ctrl_wheel_->joint_;
       double A = wheel_power_limitor_.effort_coeff;
-      double B = wheel_power_limitor_.omiga[i] / 9.55f;
+      double B = wheel_power_limitor_.omiga[i];
       double C = square(wheel_power_limitor_.omiga[i]) * wheel_power_limitor_.vel_coeff +
-                 wheel_power_limitor_.power_offset - wheel_power_limitor_.power_limit[i];
+                 wheel_power_limitor_.power_offset / 4 - wheel_power_limitor_.power_limit[i];
       double Delta = square(B) - 4 * A * C;
       if (!std::isfinite(Delta) || Delta < 0.0)
         Delta = 0.0;
       if (Delta >= 0)
       {
         double Sqrt = sqrtf(Delta);
-        double cmd{};
-        module.ctrl_wheel_->getCommand(cmd);
-        if (cmd >= 0)
+        if (wheel_power_limitor_.torque[i] >= 0)
           joint.setCommand((-B + Sqrt) / (2 * A));
         else
           joint.setCommand((-B - Sqrt) / (2 * A));
@@ -276,19 +298,17 @@ void SwerveController::updatePowerStatus()
                            .max_power =
                                std::min(power_config.pivot_max_power, power_limit * power_config.pivot_power_ratio),
                            .ratio = power_config.pivot_power_ratio };
-  double epivot_power{}, cpivot_power{};
+  double epivot_power{};
   for (size_t i = 0; i < modules_.size() && i < 4; ++i)
   {
     auto& module = modules_[i];
-    double cmd_torque = pivot_power_limitor_.torque[i] = module.ctrl_pivot_->joint_.getCommand();
+    pivot_power_limitor_.torque[i] = module.ctrl_pivot_->joint_.getCommand();
     double real_vel = pivot_power_limitor_.omiga[i] = module.ctrl_pivot_->joint_.getVelocity();
-    double real_torque = module.ctrl_pivot_->joint_.getEffort();
-    pivot_power_limitor_.power_in[i] = real_torque * real_vel / 9.55f +
-                                       pivot_power_limitor_.effort_coeff * square(real_torque) +
-                                       pivot_power_limitor_.vel_coeff * square(real_vel);
-    epivot_power += pivot_power_limitor_.power_in[i];
-    cpivot_power += cmd_torque * real_vel / 9.55f + pivot_power_limitor_.effort_coeff * square(cmd_torque) +
+    motor_lp_filters_[0][i]->input(module.ctrl_pivot_->joint_.getEffort());
+    double real_torque = motor_lp_filters_[0][i]->output();
+    epivot_power += real_torque * real_vel + pivot_power_limitor_.effort_coeff * square(real_torque) +
                     pivot_power_limitor_.vel_coeff * square(real_vel);
+    pivot_power_limitor_.power_in[i] = epivot_power;
   }
   pivot_power_limitor_.power_sum = epivot_power + pivot_power_limitor_.power_offset;
 
@@ -297,27 +317,25 @@ void SwerveController::updatePowerStatus()
     .effort_coeff = power_config.effort_coeff,
     .power_offset = power_config.power_offset,
     .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum),
-    .err_upper = 500,
-    .err_lower = 0.001,
+    .err_upper = 4000,
+    .err_lower = 100,
   };
 
-  double ewheel_power{}, cwheel_power{};
+  double ewheel_power{};
   for (size_t i = 0; i < modules_.size() && i < 4; ++i)
   {
     auto& module = modules_[i];
-    double cmd_torque = wheel_power_limitor_.torque[i] = module.ctrl_wheel_->joint_.getCommand();
+    wheel_power_limitor_.torque[i] = module.ctrl_wheel_->joint_.getCommand();
     double cmd_vel{};
     module.ctrl_wheel_->getCommand(cmd_vel);
     double real_vel = wheel_power_limitor_.omiga[i] = module.ctrl_wheel_->joint_.getVelocity();
-    double real_torque = module.ctrl_wheel_->joint_.getEffort();
+    motor_lp_filters_[1][i]->input(module.ctrl_wheel_->joint_.getEffort());
+    double real_torque = motor_lp_filters_[1][i]->output();
     wheel_power_limitor_.err[i] = cmd_vel - real_vel;
     wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
-    wheel_power_limitor_.power_in[i] = real_torque * real_vel / 9.55f +
-                                       wheel_power_limitor_.effort_coeff * square(real_torque) +
-                                       wheel_power_limitor_.vel_coeff * square(real_vel);
-    ewheel_power += wheel_power_limitor_.power_in[i];
-    cwheel_power += cmd_torque * real_vel / 9.55f + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
+    ewheel_power += real_torque * real_vel + wheel_power_limitor_.effort_coeff * square(real_torque) +
                     wheel_power_limitor_.vel_coeff * square(real_vel);
+    wheel_power_limitor_.power_in[i] = ewheel_power;
   }
   wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
 
@@ -331,9 +349,7 @@ void SwerveController::updatePowerStatus()
   };
 
   publishPower(epivot_power_pub_, epivot_power);
-  publishPower(cpivot_power_pub_, cpivot_power);
   publishPower(ewheel_power_pub_, ewheel_power);
-  publishPower(cwheel_power_pub_, cwheel_power);
 }
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)
