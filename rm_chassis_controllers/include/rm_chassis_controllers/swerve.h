@@ -81,10 +81,6 @@ private:
 
   PowerLimitor pivot_power_limitor_{};
   std::array<std::array<LowPassFilter*, 4>, 2> motor_lp_filters_{};
-
-  bool has_gimbal_imu_{ false };
-  hardware_interface::ImuSensorHandle imu_handle_{};
-  geometry_msgs::Vector3 base_gyro_{};
 };
 
 }  // namespace rm_chassis_controllers

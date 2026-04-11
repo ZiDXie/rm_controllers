@@ -48,24 +48,6 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
   if (!ChassisBase::init(robot_hw, root_nh, controller_nh))
     return false;
 
-  auto* imu_iface = robot_hw->get<hardware_interface::ImuSensorInterface>();
-  if (!imu_iface)
-    ROS_WARN("SwerveController cannot get ImuSensorInterface");
-  else
-  {
-    try
-    {
-      imu_handle_ = imu_iface->getHandle(getParam(controller_nh, "imu_name", std::string("gimbal_imu")));
-      has_gimbal_imu_ = true;
-      ROS_INFO_STREAM("SwerveController imu_name: " << imu_handle_.getName());
-    }
-    catch (const hardware_interface::HardwareInterfaceException& e)
-    {
-      has_gimbal_imu_ = false;
-      ROS_WARN_STREAM("SwerveController cannot get imu handle: " << e.what());
-    }
-  }
-
   // 0 for pivot, 1 for wheel. Each module has 4 joints at most.
   for (auto& filter_group : motor_lp_filters_)
   {
@@ -121,19 +103,22 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
 
 void SwerveController::moveJoint(const ros::Time& time, const ros::Duration& period)
 {
-  // getBaseGyro();
   Vec2<double> vel_center(vel_cmd_.x, vel_cmd_.y);
   for (auto& module : modules_)
   {
     Vec2<double> vel = vel_center + vel_cmd_.z * Vec2<double>(-module.position_.y(), module.position_.x());
-    double vel_angle = std::atan2(vel.y(), vel.x()) + module.pivot_offset_;
-    // Judge for flying slope.
-    // vel_angle = stateJudge(vel_angle);
-    // Direction flipping and Stray module mitigation
-    double a = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle);
-    double b = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle + M_PI);
-    module.ctrl_pivot_->setCommand(std::abs(a) < std::abs(b) ? vel_angle : vel_angle + M_PI);
-    module.ctrl_wheel_->setCommand(vel.norm() / module.wheel_radius_ * std::cos(a));
+    if (vel.norm() < 0.2)
+    {
+      module.ctrl_wheel_->setCommand(0);
+    }
+    else
+    {
+      double vel_angle = std::atan2(vel.y(), vel.x()) + module.pivot_offset_;
+      double a = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle);
+      double b = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle + M_PI);
+      module.ctrl_pivot_->setCommand(std::abs(a) < std::abs(b) ? vel_angle : vel_angle + M_PI);
+      module.ctrl_wheel_->setCommand(vel.norm() / module.wheel_radius_ * std::cos(a));
+    }
     module.ctrl_pivot_->update(time, period);
     module.ctrl_wheel_->update(time, period);
   }
@@ -163,39 +148,6 @@ geometry_msgs::Twist SwerveController::odometry()
       vel_modules.angular.z / modules_.size() /
       std::sqrt(std::pow(modules_.begin()->position_.x(), 2) + std::pow(modules_.begin()->position_.y(), 2));
   return vel_data;
-}
-
-void SwerveController::getBaseGyro()
-{
-  // Todo:use base_imu to detect real base_gyro
-  if (has_gimbal_imu_)
-  {
-    geometry_msgs::Vector3 imu_gyro{};
-    imu_gyro.x = imu_handle_.getAngularVelocity()[0];
-    imu_gyro.y = imu_handle_.getAngularVelocity()[1];
-    imu_gyro.z = imu_handle_.getAngularVelocity()[2];
-
-    // Publish base_gyro.
-    if (base_gyro_pub_ && base_gyro_pub_->trylock())
-    {
-      base_gyro_pub_->msg_.header.stamp = ros::Time::now();
-      base_gyro_pub_->msg_.header.frame_id = "base_link";
-      base_gyro_pub_->msg_.vector = base_gyro_;
-      base_gyro_pub_->unlockAndPublish();
-    }
-  }
-}
-
-double SwerveController::stateJudge(double vel_angle)
-{
-  // Check for flying slope state based on gyro angular velocity (Roll and Pitch)
-  if (fabs(base_gyro_.y) > 1.5)
-  // Flying slope state,set pivot to 0
-  {
-    return 0;
-  }
-  else
-    return vel_angle;
 }
 
 // Ref: https://gitee.com/cod_-control/rmcod2026_-sentry/tree/dev
