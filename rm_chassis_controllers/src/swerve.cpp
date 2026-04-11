@@ -52,15 +52,12 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
   for (auto& filter_group : motor_lp_filters_)
   {
     for (auto& filter : filter_group)
-      filter = new LowPassFilter(20);
+      filter = new LowPassFilter(5);
   }
 
-  auto ewheel_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
-  this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
-  auto epivot_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/epivot_power", 100);
-  this->epivot_power_pub_ = std::move(epivot_power_publisher);
+  auto power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power", 100);
+  this->power_pub_ = std::move(power_publisher);
   auto base_gyro_publisher = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::Vector3Stamped>>(
       controller_nh, "base_gyro", 100);
   this->base_gyro_pub_ = std::move(base_gyro_publisher);
@@ -107,18 +104,11 @@ void SwerveController::moveJoint(const ros::Time& time, const ros::Duration& per
   for (auto& module : modules_)
   {
     Vec2<double> vel = vel_center + vel_cmd_.z * Vec2<double>(-module.position_.y(), module.position_.x());
-    if (vel.norm() < 0.2)
-    {
-      module.ctrl_wheel_->setCommand(0);
-    }
-    else
-    {
-      double vel_angle = std::atan2(vel.y(), vel.x()) + module.pivot_offset_;
-      double a = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle);
-      double b = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle + M_PI);
-      module.ctrl_pivot_->setCommand(std::abs(a) < std::abs(b) ? vel_angle : vel_angle + M_PI);
-      module.ctrl_wheel_->setCommand(vel.norm() / module.wheel_radius_ * std::cos(a));
-    }
+    double vel_angle = std::atan2(vel.y(), vel.x()) + module.pivot_offset_;
+    double a = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle);
+    double b = angles::shortest_angular_distance(module.ctrl_pivot_->joint_.getPosition(), vel_angle + M_PI);
+    module.ctrl_pivot_->setCommand(std::abs(a) < std::abs(b) ? vel_angle : vel_angle + M_PI);
+    module.ctrl_wheel_->setCommand(vel.norm() / module.wheel_radius_ * std::cos(a));
     module.ctrl_pivot_->update(time, period);
     module.ctrl_wheel_->update(time, period);
   }
@@ -258,20 +248,20 @@ void SwerveController::updatePowerStatus()
     double real_vel = pivot_power_limitor_.omiga[i] = module.ctrl_pivot_->joint_.getVelocity();
     motor_lp_filters_[0][i]->input(module.ctrl_pivot_->joint_.getEffort());
     double real_torque = motor_lp_filters_[0][i]->output();
-    epivot_power += real_torque * real_vel + pivot_power_limitor_.effort_coeff * square(real_torque) +
-                    pivot_power_limitor_.vel_coeff * square(real_vel);
-    pivot_power_limitor_.power_in[i] = epivot_power;
+    pivot_power_limitor_.power_in[i] = real_torque * real_vel +
+                                       pivot_power_limitor_.effort_coeff * square(real_torque) +
+                                       pivot_power_limitor_.vel_coeff * square(real_vel);
+    epivot_power += pivot_power_limitor_.power_in[i];
   }
   pivot_power_limitor_.power_sum = epivot_power + pivot_power_limitor_.power_offset;
 
-  wheel_power_limitor_ = {
-    .vel_coeff = power_config.vel_coeff,
-    .effort_coeff = power_config.effort_coeff,
-    .power_offset = power_config.power_offset,
-    .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum),
-    .err_upper = 4000,
-    .err_lower = 100,
-  };
+  wheel_power_limitor_ = { .vel_coeff = power_config.vel_coeff,
+                           .effort_coeff = power_config.effort_coeff,
+                           .power_offset = power_config.power_offset,
+                           .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum),
+                           .err_upper = 1e8,
+                           .err_lower = 1e6,
+                           .err_sum = 0 };
 
   double ewheel_power{};
   for (size_t i = 0; i < modules_.size() && i < 4; ++i)
@@ -285,23 +275,19 @@ void SwerveController::updatePowerStatus()
     double real_torque = motor_lp_filters_[1][i]->output();
     wheel_power_limitor_.err[i] = cmd_vel - real_vel;
     wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
-    ewheel_power += real_torque * real_vel + wheel_power_limitor_.effort_coeff * square(real_torque) +
-                    wheel_power_limitor_.vel_coeff * square(real_vel);
-    wheel_power_limitor_.power_in[i] = ewheel_power;
+    wheel_power_limitor_.power_in[i] = real_torque * real_vel +
+                                       wheel_power_limitor_.effort_coeff * square(real_torque) +
+                                       wheel_power_limitor_.vel_coeff * square(real_vel);
+    ewheel_power += wheel_power_limitor_.power_in[i];
   }
   wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
 
   // Publish power status.
-  auto publishPower = [](auto& pub, const double power) {
-    if (pub && pub->trylock())
-    {
-      pub->msg_.data = power;
-      pub->unlockAndPublish();
-    }
-  };
-
-  publishPower(epivot_power_pub_, epivot_power);
-  publishPower(ewheel_power_pub_, ewheel_power);
+  if (power_pub_ && power_pub_->trylock())
+  {
+    power_pub_->msg_.data = wheel_power_limitor_.power_sum + pivot_power_limitor_.power_sum;
+    power_pub_->unlockAndPublish();
+  }
 }
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)

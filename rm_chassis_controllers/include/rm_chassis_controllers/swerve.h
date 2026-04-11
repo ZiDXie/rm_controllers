@@ -76,7 +76,6 @@ private:
 
   std::vector<Module> modules_{};
   std::vector<hardware_interface::JointHandle> pivot_joint_handles_{};
-  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> epivot_power_pub_;
   std::unique_ptr<realtime_tools::RealtimePublisher<geometry_msgs::Vector3Stamped>> base_gyro_pub_;
 
   PowerLimitor pivot_power_limitor_{};

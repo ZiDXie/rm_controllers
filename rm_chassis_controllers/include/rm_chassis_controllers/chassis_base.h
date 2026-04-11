@@ -189,7 +189,7 @@ protected:
   realtime_tools::RealtimeBuffer<geometry_msgs::TransformStamped> localization_rt_buffer_{};
   realtime_tools::RealtimeBuffer<rm_chassis_controllers::PowerLimitConfig> power_limit_rt_buffer_;
   std::unique_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry>> odometry_rt_pub_;
-  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> ewheel_power_pub_;
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> power_pub_;
   dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>* power_limit_srv_{};
 
   rm_common::TfRtBroadcaster brcst4global_map2robot_odom_{};
