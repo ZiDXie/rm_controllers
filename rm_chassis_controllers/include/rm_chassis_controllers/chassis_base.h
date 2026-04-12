@@ -79,7 +79,8 @@ struct PowerLimitor
   double power_offset{};
   double max_power{};
   double power_in[4]{};
-  double power_sum{};
+  double cmd_power{};
+  double estimated_power{};
   double power_limit[4]{};
   double ratio{ 1.0 };
   double err[4]{};
@@ -228,6 +229,7 @@ protected:
   double max_odom_vel_{ 10.0 };
   double timeout_{ 0.1 };
   double chassis_power_{ 0.0 };
+  bool capacity_update_flag_{ false };
 
   bool odom_initialized_{ false };
   bool slam_updated_{ false };

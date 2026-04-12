@@ -167,17 +167,17 @@ void SwerveController::powerLimit()
   // Set power limit to each joint according to K.
   for (int i = 0; i < 4; i++)
   {
-    double pivot_zoom = abs(pivot_power_limitor_.power_in[i]) / pivot_power_limitor_.power_sum;
+    double pivot_zoom = abs(pivot_power_limitor_.power_in[i]) / pivot_power_limitor_.cmd_power;
     pivot_zoom = limit(pivot_zoom, 0.0, 1.0);
     double wheel_zoom =
         (wheel_power_limitor_.K * abs(wheel_power_limitor_.err[i]) / wheel_power_limitor_.err_sum) +
-        (1 - wheel_power_limitor_.K) * (abs(wheel_power_limitor_.power_in[i]) / wheel_power_limitor_.power_sum);
+        (1 - wheel_power_limitor_.K) * (abs(wheel_power_limitor_.power_in[i]) / wheel_power_limitor_.cmd_power);
     wheel_zoom = limit(wheel_zoom, 0.0, 1.0);
     pivot_power_limitor_.power_limit[i] = pivot_zoom * pivot_power_limitor_.max_power;
     wheel_power_limitor_.power_limit[i] = wheel_zoom * wheel_power_limitor_.max_power;
   }
   // Set command limit according to power limit.
-  if (pivot_power_limitor_.power_sum > pivot_power_limitor_.max_power)
+  if (pivot_power_limitor_.cmd_power > pivot_power_limitor_.max_power)
   {
     for (size_t i = 0; i < modules_.size() && i < 4; ++i)
     {
@@ -204,7 +204,7 @@ void SwerveController::powerLimit()
       }
     }
   }
-  if (wheel_power_limitor_.power_sum > wheel_power_limitor_.max_power)
+  if (wheel_power_limitor_.cmd_power > wheel_power_limitor_.max_power)
   {
     for (size_t i = 0; i < modules_.size() && i < 4; ++i)
     {
@@ -263,12 +263,13 @@ void SwerveController::updatePowerStatus()
     pivot_power_limitor_.power_in[i] = cpivot_power;
   }
 
-  pivot_power_limitor_.power_sum = cpivot_power + pivot_power_limitor_.power_offset;
+  pivot_power_limitor_.cmd_power = cpivot_power + pivot_power_limitor_.power_offset;
+  pivot_power_limitor_.estimated_power = epivot_power + pivot_power_limitor_.power_offset;
 
   wheel_power_limitor_ = { .vel_coeff = power_config.vel_coeff,
                            .effort_coeff = power_config.effort_coeff,
                            .power_offset = power_config.power_offset,
-                           .max_power = power_limit - std::abs(pivot_power_limitor_.power_sum),
+                           .max_power = power_limit - std::abs(pivot_power_limitor_.cmd_power),
                            .err_upper = 1e8,
                            .err_lower = 1e6,
                            .err_sum = 0 };
@@ -306,8 +307,8 @@ void SwerveController::updatePowerStatus()
     }
   };
 
-  publishPower(epower_pub_, epivot_power + ewheel_power);
-  publishPower(cpower_pub_, cpivot_power + cwheel_power);
+  publishPower(epower_pub_, pivot_power_limitor_.estimated_power + wheel_power_limitor_.estimated_power);
+  publishPower(cpower_pub_, pivot_power_limitor_.cmd_power + wheel_power_limitor_.cmd_power);
 }
 
 PLUGINLIB_EXPORT_CLASS(rm_chassis_controllers::SwerveController, controller_interface::ControllerBase)

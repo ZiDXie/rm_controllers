@@ -111,11 +111,11 @@ void OmniController::powerLimit()
   {
     double wheel_zoom =
         (wheel_power_limitor_.K * abs(wheel_power_limitor_.err[i]) / wheel_power_limitor_.err_sum) +
-        (1 - wheel_power_limitor_.K) * (abs(wheel_power_limitor_.power_in[i]) / wheel_power_limitor_.power_sum);
+        (1 - wheel_power_limitor_.K) * (abs(wheel_power_limitor_.power_in[i]) / wheel_power_limitor_.cmd_power);
     wheel_zoom = limit(wheel_zoom, 0.0, 1.0);
     wheel_power_limitor_.power_limit[i] = wheel_zoom * wheel_power_limitor_.max_power;
   }
-  if (wheel_power_limitor_.power_sum > wheel_power_limitor_.max_power)
+  if (wheel_power_limitor_.cmd_power > wheel_power_limitor_.max_power)
   {
     for (size_t i = 0; i < joints_.size() && i < 4; ++i)
     {
@@ -179,7 +179,8 @@ void OmniController::updatePowerStatus()
 
     wheel_power_limitor_.power_in[i] = cwheel_power;
   }
-  wheel_power_limitor_.power_sum = cwheel_power + wheel_power_limitor_.power_offset;
+  wheel_power_limitor_.cmd_power = cwheel_power + wheel_power_limitor_.power_offset;
+  wheel_power_limitor_.estimated_power = ewheel_power + wheel_power_limitor_.power_offset;
 
   // Publish power status.
   auto publishPower = [](auto& pub, const double power) {
@@ -190,8 +191,8 @@ void OmniController::updatePowerStatus()
     }
   };
 
-  publishPower(epower_pub_, ewheel_power);
-  publishPower(cpower_pub_, cwheel_power);
+  publishPower(epower_pub_, wheel_power_limitor_.estimated_power);
+  publishPower(cpower_pub_, wheel_power_limitor_.cmd_power);
 }
 
 }  // namespace rm_chassis_controllers
