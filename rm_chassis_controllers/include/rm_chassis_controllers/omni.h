@@ -5,6 +5,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <rm_common/filters/lp_filter.h>
 
 #include "rm_chassis_controllers/chassis_base.h"
 
@@ -26,6 +27,8 @@ private:
   Eigen::MatrixXd chassis2joints_;
   void powerLimit() override;
   void updatePowerStatus() override;
+
+  std::array<LowPassFilter*, 4> motor_lp_filters_{};
 };
 
 }  // namespace rm_chassis_controllers

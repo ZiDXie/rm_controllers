@@ -52,14 +52,14 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
   for (auto& filter_group : motor_lp_filters_)
   {
     for (auto& filter : filter_group)
-      filter = new LowPassFilter(5);
+      filter = new LowPassFilter(20);
   }
 
   auto epower_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power", 100);
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/estimated", 100);
   this->epower_pub_ = std::move(epower_publisher);
   auto cpower_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power", 100);
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/commanded", 100);
   this->cpower_pub_ = std::move(cpower_publisher);
   auto base_gyro_publisher = std::make_unique<realtime_tools::RealtimePublisher<geometry_msgs::Vector3Stamped>>(
       controller_nh, "base_gyro", 100);

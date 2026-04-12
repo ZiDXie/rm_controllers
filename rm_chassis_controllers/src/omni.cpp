@@ -17,9 +17,17 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
 {
   ChassisBase::init(robot_hw, root_nh, controller_nh);
 
-  auto ewheel_power_publisher =
-      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/ewheel_power", 100);
-  this->ewheel_power_pub_ = std::move(ewheel_power_publisher);
+  auto epower_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/estimated", 100);
+  this->epower_pub_ = std::move(epower_publisher);
+  auto cpower_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/commanded", 100);
+  this->cpower_pub_ = std::move(cpower_publisher);
+
+  for (auto& filter : motor_lp_filters_)
+  {
+    filter = new LowPassFilter(20);
+  }
 
   XmlRpc::XmlRpcValue wheels;
   controller_nh.getParam("wheels", wheels);
@@ -123,9 +131,7 @@ void OmniController::powerLimit()
       if (Delta >= 0)
       {
         double Sqrt = sqrtf(Delta);
-        double cmd{};
-        ctl->getCommand(cmd);
-        if (cmd >= 0)
+        if (wheel_power_limitor_.torque[i] >= 0)
           joint.setCommand((-B + Sqrt) / (2 * A));
         else
           joint.setCommand((-B - Sqrt) / (2 * A));
@@ -143,32 +149,37 @@ void OmniController::updatePowerStatus()
   double power_limit = cmd_rt_buffer_.readFromRT()->cmd_chassis_.power_limit;
   const auto& power_config = *power_limit_rt_buffer_.readFromRT();
 
-  wheel_power_limitor_ = {
-    .vel_coeff = power_config.vel_coeff,
-    .effort_coeff = power_config.effort_coeff,
-    .power_offset = power_config.power_offset,
-    .max_power = power_limit,
-    .err_upper = 4000,
-    .err_lower = 10,
-  };
+  wheel_power_limitor_ = { .vel_coeff = power_config.vel_coeff,
+                           .effort_coeff = power_config.effort_coeff,
+                           .power_offset = power_config.power_offset,
+                           .max_power = power_limit,
+                           .err_upper = 4000,
+                           .err_lower = 10,
+                           .err_sum = 0 };
 
-  double ewheel_power{};
+  double ewheel_power{}, cwheel_power{};
   for (size_t i = 0; i < joints_.size() && i < 4; ++i)
   {
     auto& ctl = joints_[i];
-    wheel_power_limitor_.torque[i] = ctl->joint_.getCommand();
+
+    double cmd_torque = wheel_power_limitor_.torque[i] = ctl->joint_.getCommand();
     double cmd_vel{};
     ctl->getCommand(cmd_vel);
     double real_vel = wheel_power_limitor_.omiga[i] = ctl->joint_.getVelocity();
-    double real_torque = ctl->joint_.getEffort();
+    motor_lp_filters_[i]->input(ctl->joint_.getEffort());
+    double real_torque = motor_lp_filters_[i]->output();
+
     wheel_power_limitor_.err[i] = cmd_vel - real_vel;
     wheel_power_limitor_.err_sum += abs(wheel_power_limitor_.err[i]);
-    wheel_power_limitor_.power_in[i] = real_torque * real_vel +
-                                       wheel_power_limitor_.effort_coeff * square(real_torque) +
-                                       wheel_power_limitor_.vel_coeff * square(real_vel);
-    ewheel_power += wheel_power_limitor_.power_in[i];
+
+    ewheel_power += real_torque * real_vel + wheel_power_limitor_.effort_coeff * square(real_torque) +
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
+    cwheel_power += cmd_torque * real_vel + wheel_power_limitor_.effort_coeff * square(cmd_torque) +
+                    wheel_power_limitor_.vel_coeff * square(real_vel);
+
+    wheel_power_limitor_.power_in[i] = cwheel_power;
   }
-  wheel_power_limitor_.power_sum = ewheel_power + wheel_power_limitor_.power_offset;
+  wheel_power_limitor_.power_sum = cwheel_power + wheel_power_limitor_.power_offset;
 
   // Publish power status.
   auto publishPower = [](auto& pub, const double power) {
@@ -178,7 +189,9 @@ void OmniController::updatePowerStatus()
       pub->unlockAndPublish();
     }
   };
-  publishPower(ewheel_power_pub_, ewheel_power);
+
+  publishPower(epower_pub_, ewheel_power);
+  publishPower(cpower_pub_, cwheel_power);
 }
 
 }  // namespace rm_chassis_controllers
