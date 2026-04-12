@@ -80,6 +80,8 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
   slam_sub_ = controller_nh.subscribe<nav_msgs::Odometry>(slam_topic_, 10, &ChassisBase::slamCallback, this);
   localization_sub_ = controller_nh.subscribe<geometry_msgs::TransformStamped>(
       localization_topic_, 10, &ChassisBase::localizationCallback, this);
+  capacity_sub_ = root_nh.subscribe<rm_msgs::PowerManagementSampleAndStatusData>(capacity_topic_, 10,
+                                                                                 &ChassisBase::capacityCallback, this);
 
   // power publisher and dynamic reconfigure
   power_limit_srv_ = new dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>(
@@ -485,6 +487,12 @@ void ChassisBase<T...>::localizationCallback(const geometry_msgs::TransformStamp
 {
   localization_rt_buffer_.writeFromNonRT(*msg);
   localization_updated_ = true;
+}
+
+template <typename... T>
+void ChassisBase<T...>::capacityCallback(const rm_msgs::PowerManagementSampleAndStatusData::ConstPtr& msg)
+{
+  chassis_power_ = msg->chassis_power + msg->capacity_discharge_power;
 }
 
 template <typename... T>
