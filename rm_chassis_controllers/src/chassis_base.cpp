@@ -492,8 +492,8 @@ void ChassisBase<T...>::localizationCallback(const geometry_msgs::TransformStamp
 template <typename... T>
 void ChassisBase<T...>::capacityCallback(const rm_msgs::PowerManagementSampleAndStatusData::ConstPtr& msg)
 {
-  chassis_power_ = msg->chassis_power + msg->capacity_discharge_power;
-  capacity_update_flag_ = true;
+  // chassis_power_ = msg->chassis_power + msg->capacity_discharge_power;
+  // capacity_update_flag_ = true;
 }
 
 template <typename... T>

@@ -80,6 +80,7 @@ private:
 
   PowerLimitor pivot_power_limitor_{};
   std::array<std::array<LowPassFilter*, 4>, 2> motor_lp_filters_{};
+  std::unique_ptr<Rls<double>> rls_{};
 };
 
 }  // namespace rm_chassis_controllers
