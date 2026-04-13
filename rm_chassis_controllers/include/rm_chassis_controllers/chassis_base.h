@@ -58,8 +58,6 @@
 #include <cmath>
 #include <string>
 #include <std_msgs/Float64.h>
-#include <dynamic_reconfigure/server.h>
-#include <rm_chassis_controllers/PowerLimitConfig.h>
 #include <rm_msgs/PowerManagementSampleAndStatusData.h>
 
 namespace rm_chassis_controllers
@@ -181,7 +179,6 @@ protected:
   void slamCallback(const nav_msgs::Odometry::ConstPtr& msg);
   void localizationCallback(const geometry_msgs::TransformStamped::ConstPtr& msg);
   void capacityCallback(const rm_msgs::PowerManagementSampleAndStatusData::ConstPtr& msg);
-  void powerLimitReconfigCB(rm_chassis_controllers::PowerLimitConfig& config, uint32_t level);
 
   rm_control::RobotStateHandle robot_state_handle_{};
   hardware_interface::EffortJointInterface* effort_joint_interface_{};
@@ -189,18 +186,18 @@ protected:
   realtime_tools::RealtimeBuffer<Command> cmd_rt_buffer_{};
   realtime_tools::RealtimeBuffer<nav_msgs::Odometry> slam_rt_buffer_{};
   realtime_tools::RealtimeBuffer<geometry_msgs::TransformStamped> localization_rt_buffer_{};
-  realtime_tools::RealtimeBuffer<rm_chassis_controllers::PowerLimitConfig> power_limit_rt_buffer_;
   std::unique_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry>> odometry_rt_pub_;
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> cpower_pub_;  // command power publisher
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> epower_pub_;  // estimated power publisher
-  dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>* power_limit_srv_{};
 
   rm_common::TfRtBroadcaster brcst4global_map2robot_odom_{};
   rm_common::TfRtBroadcaster brcst4robot_odom2robot_base_{};
+  rm_common::TfRtBroadcaster brcst4global_map2camera_init_{};
 
   geometry_msgs::TransformStamped global_map2robot_odom_{};
   geometry_msgs::TransformStamped robot_odom2robot_base_{};
   geometry_msgs::TransformStamped robot_base2lidar_base_{};
+  geometry_msgs::TransformStamped global_map2camera_init_{};
 
   tf2::Transform T_global_map2robot_odom_{};
   tf2::Transform T_robot_odom_2robot_base_{};
@@ -231,6 +228,7 @@ protected:
   double chassis_power_{ 0.0 };
   bool capacity_update_flag_{ false };
 
+  bool gravity_estimation_offset_{ false };
   bool odom_initialized_{ false };
   bool slam_updated_{ false };
   bool localization_updated_{ false };

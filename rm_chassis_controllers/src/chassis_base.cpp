@@ -50,6 +50,7 @@ void ChassisBase<T...>::initialize_parameters(ros::NodeHandle& controller_nh)
     controller_nh.getParam("publish_rate", publish_rate_);
     controller_nh.getParam("publish_map_tf", publish_map_tf_);
     controller_nh.getParam("publish_odom_tf", publish_odom_tf_);
+    controller_nh.getParam("gravity_estimation_offset", gravity_estimation_offset_);
     controller_nh.getParam("slam_topic", slam_topic_);
     controller_nh.getParam("localization_topic", localization_topic_);
 
@@ -83,13 +84,6 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
   capacity_sub_ = root_nh.subscribe<rm_msgs::PowerManagementSampleAndStatusData>(capacity_topic_, 10,
                                                                                  &ChassisBase::capacityCallback, this);
 
-  // power publisher and dynamic reconfigure
-  power_limit_srv_ = new dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>(
-      ros::NodeHandle(controller_nh, "power"));
-  dynamic_reconfigure::Server<rm_chassis_controllers::PowerLimitConfig>::CallbackType cb =
-      boost::bind(&ChassisBase<T...>::powerLimitReconfigCB, this, _1, _2);
-  power_limit_srv_->setCallback(cb);
-
   // Setup odometry realtime publisher + odom message constant fields
   auto odometry_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<nav_msgs::Odometry>>(root_nh, "odom", 100);
@@ -112,6 +106,13 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
     global_map2robot_odom_.transform.rotation.w = 1;
     brcst4global_map2robot_odom_.init(root_nh);
     brcst4global_map2robot_odom_.sendTransform(global_map2robot_odom_);
+
+    global_map2camera_init_.header.stamp = ros::Time::now();
+    global_map2camera_init_.header.frame_id = global_map_frame_id_;
+    global_map2camera_init_.child_frame_id = "camera_init";
+    global_map2camera_init_.transform.rotation.w = 1;
+    brcst4global_map2camera_init_.init(root_nh);
+    brcst4global_map2camera_init_.sendTransform(global_map2camera_init_);
   }
 
   if (publish_odom_tf_)
@@ -285,9 +286,18 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         T_global_map2lidar_odom_.setOrigin(tf2::Vector3(global_map2lidar_odom.transform.translation.x,
                                                         global_map2lidar_odom.transform.translation.y,
                                                         global_map2lidar_odom.transform.translation.z));
-        T_global_map2lidar_odom_.setRotation(
-            tf2::Quaternion(global_map2lidar_odom.transform.rotation.x, global_map2lidar_odom.transform.rotation.y,
-                            global_map2lidar_odom.transform.rotation.z, global_map2lidar_odom.transform.rotation.w));
+        if (gravity_estimation_offset_)
+        {
+          T_global_map2lidar_odom_.setRotation(tf2::Quaternion(0, 0, 0, 1));
+          global_map2camera_init_.transform.translation = global_map2lidar_odom.transform.translation;
+        }
+        else
+        {
+          T_global_map2lidar_odom_.setRotation(
+              tf2::Quaternion(global_map2lidar_odom.transform.rotation.x, global_map2lidar_odom.transform.rotation.y,
+                              global_map2lidar_odom.transform.rotation.z, global_map2lidar_odom.transform.rotation.w));
+          global_map2camera_init_.transform = global_map2lidar_odom.transform;
+        }
         odom_initialized_ = true;
       }
       catch (...)
@@ -308,12 +318,14 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         T_global_map2lidar_odom_.setRotation(
             tf2::Quaternion(localization->transform.rotation.x, localization->transform.rotation.y,
                             localization->transform.rotation.z, localization->transform.rotation.w));
+        global_map2camera_init_.transform = tf2::toMsg(T_global_map2lidar_odom_);
       }
       catch (...)
       {
         ROS_WARN("Failed to update localization offset.");
       }
     }
+    ros::Time tmp_time = ros::Time::now();
 
     if (slam_updated_)
     {
@@ -321,6 +333,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       {
         slam_updated_ = false;
         const auto& slam = slam_rt_buffer_.readFromRT();
+        tmp_time = slam->header.stamp;
         T_lidar_odom2lidar_base_.setOrigin(
             tf2::Vector3(slam->pose.pose.position.x, slam->pose.pose.position.y, slam->pose.pose.position.z));
         T_lidar_odom2lidar_base_.setRotation(
@@ -328,7 +341,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
                             slam->pose.pose.orientation.w));
 
         robot_base2lidar_base_ =
-            robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
+            robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, slam->header.stamp);
         T_robot_base2lidar_base_.setOrigin(tf2::Vector3(robot_base2lidar_base_.transform.translation.x,
                                                         robot_base2lidar_base_.transform.translation.y,
                                                         robot_base2lidar_base_.transform.translation.z));
@@ -336,12 +349,15 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
             tf2::Quaternion(robot_base2lidar_base_.transform.rotation.x, robot_base2lidar_base_.transform.rotation.y,
                             robot_base2lidar_base_.transform.rotation.z, robot_base2lidar_base_.transform.rotation.w));
 
-        T_robot_odom_2robot_base_.setOrigin(tf2::Vector3(robot_odom2robot_base_.transform.translation.x,
-                                                         robot_odom2robot_base_.transform.translation.y,
-                                                         robot_odom2robot_base_.transform.translation.z));
-        T_robot_odom_2robot_base_.setRotation(
-            tf2::Quaternion(robot_odom2robot_base_.transform.rotation.x, robot_odom2robot_base_.transform.rotation.y,
-                            robot_odom2robot_base_.transform.rotation.z, robot_odom2robot_base_.transform.rotation.w));
+        auto tmp_robot_odom2robot_base =
+            robot_state_handle_.lookupTransform(robot_odom_frame_id_, robot_base_frame_id_, slam->header.stamp);
+
+        T_robot_odom_2robot_base_.setOrigin(tf2::Vector3(tmp_robot_odom2robot_base.transform.translation.x,
+                                                         tmp_robot_odom2robot_base.transform.translation.y,
+                                                         tmp_robot_odom2robot_base.transform.translation.z));
+        T_robot_odom_2robot_base_.setRotation(tf2::Quaternion(
+            tmp_robot_odom2robot_base.transform.rotation.x, tmp_robot_odom2robot_base.transform.rotation.y,
+            tmp_robot_odom2robot_base.transform.rotation.z, tmp_robot_odom2robot_base.transform.rotation.w));
 
         T_global_map2robot_odom_ = T_global_map2lidar_odom_ * T_lidar_odom2lidar_base_ *
                                    T_robot_base2lidar_base_.inverse() * T_robot_odom_2robot_base_.inverse();
@@ -353,7 +369,8 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         ROS_WARN("Failed to update global_map2robot_odom.");
       }
     }
-    global_map2robot_odom_.header.stamp = time;
+    global_map2robot_odom_.header.stamp = tmp_time;
+    global_map2camera_init_.header.stamp = tmp_time;
   }
 
   if (publish_odom_tf_)
@@ -416,6 +433,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
     if (publish_map_tf_)
     {
       brcst4global_map2robot_odom_.sendTransform(global_map2robot_odom_);
+      brcst4global_map2camera_init_.sendTransform(global_map2camera_init_);
     }
 
     if (publish_odom_tf_)
@@ -494,13 +512,6 @@ void ChassisBase<T...>::capacityCallback(const rm_msgs::PowerManagementSampleAnd
 {
   // chassis_power_ = msg->chassis_power + msg->capacity_discharge_power;
   // capacity_update_flag_ = true;
-}
-
-template <typename... T>
-void ChassisBase<T...>::powerLimitReconfigCB(rm_chassis_controllers::PowerLimitConfig& config, uint32_t /*level*/)
-{
-  ROS_INFO("[Power Limit] Dynamic params change");
-  power_limit_rt_buffer_.writeFromNonRT(config);
 }
 
 }  // namespace rm_chassis_controllers
