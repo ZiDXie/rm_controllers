@@ -58,6 +58,7 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
     controller_nh.getParam("power/pivot_effort_coeff", pivot_power_limitor_.effort_coeff);
     controller_nh.getParam("power/pivot_power_offset", pivot_power_limitor_.power_offset);
     controller_nh.getParam("power/pivot_power_ratio", pivot_power_limitor_.ratio);
+    controller_nh.param<bool>("use_rls", use_rls_, false);
   }
   catch (const std::exception& e)
   {
@@ -322,7 +323,7 @@ void SwerveController::updatePowerStatus()
   double estimated_total_power = pivot_power_limitor_.estimated_power + wheel_power_limitor_.estimated_power;
   double cmd_total_power = pivot_power_limitor_.cmd_power + wheel_power_limitor_.cmd_power;
 
-  if (capacity_update_flag_)
+  if (capacity_update_flag_ && use_rls_)
   {
     // Update Rls.
     double all_in = limit(estimated_total_power, -power_limit, power_limit);
@@ -337,7 +338,7 @@ void SwerveController::updatePowerStatus()
            square(wheel_power_limitor_.omiga[2]) + square(wheel_power_limitor_.omiga[3]);
     rls_->setU(all_in);
     rls_->setX(x);
-    rls_->setY(estimated_total_power);  // Todo: use chasssis power from capacity topic for better estimation.
+    rls_->setY(chassis_power_);
     rls_->update();
     auto w = rls_->getW();
     pivot_power_limitor_.effort_coeff = w(0);

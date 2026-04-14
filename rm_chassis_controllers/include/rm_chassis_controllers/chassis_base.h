@@ -189,6 +189,7 @@ protected:
   std::unique_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry>> odometry_rt_pub_;
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> cpower_pub_;  // command power publisher
   std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> epower_pub_;  // estimated power publisher
+  std::unique_ptr<realtime_tools::RealtimePublisher<std_msgs::Float64>> chassis_power_pub_;  // chassis power publisher
 
   rm_common::TfRtBroadcaster brcst4global_map2robot_odom_{};
   rm_common::TfRtBroadcaster brcst4robot_odom2robot_base_{};
@@ -227,6 +228,7 @@ protected:
   double timeout_{ 0.1 };
   double chassis_power_{ 0.0 };
   bool capacity_update_flag_{ false };
+  bool use_rls_{ false };
 
   bool gravity_estimation_offset_{ false };
   bool odom_initialized_{ false };

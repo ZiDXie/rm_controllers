@@ -23,6 +23,7 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
     controller_nh.getParam("power/vel_coeff", wheel_power_limitor_.vel_coeff);
     controller_nh.getParam("power/effort_coeff", wheel_power_limitor_.effort_coeff);
     controller_nh.getParam("power/power_offset", wheel_power_limitor_.power_offset);
+    controller_nh.param<bool>("use_rls", use_rls_, false);
   }
   catch (const std::exception& e)
   {
@@ -30,9 +31,18 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
     return false;
   }
 
-  // pivot don't need err to multiply power.
   wheel_power_limitor_.err_upper = 4000;
   wheel_power_limitor_.err_lower = 10;
+
+  rls_ = std::make_unique<Rls<double>>(2, 1, 0.99999, 1e-5);
+  Eigen::Matrix<double, 2, 1> w;
+  w << wheel_power_limitor_.effort_coeff, wheel_power_limitor_.vel_coeff;
+  rls_->setW(w);
+
+  for (auto& filter : motor_lp_filters_)
+  {
+    filter = new LowPassFilter(20);
+  }
 
   auto epower_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/estimated", 100);
@@ -40,11 +50,6 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
   auto cpower_publisher =
       std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/commanded", 100);
   this->cpower_pub_ = std::move(cpower_publisher);
-
-  for (auto& filter : motor_lp_filters_)
-  {
-    filter = new LowPassFilter(20);
-  }
 
   XmlRpc::XmlRpcValue wheels;
   controller_nh.getParam("wheels", wheels);
@@ -196,6 +201,25 @@ void OmniController::updatePowerStatus()
 
   double estimated_total_power = wheel_power_limitor_.estimated_power;
   double cmd_total_power = wheel_power_limitor_.cmd_power;
+
+  if (capacity_update_flag_ && use_rls_)
+  {
+    // Update Rls.
+    double all_in = limit(estimated_total_power, -power_limit, power_limit);
+    Eigen::Matrix<double, 2, 1> x;
+    x(0) = square(wheel_power_limitor_.torque[0]) + square(wheel_power_limitor_.torque[1]) +
+           square(wheel_power_limitor_.torque[2]) + square(wheel_power_limitor_.torque[3]);
+    x(1) = square(wheel_power_limitor_.omiga[0]) + square(wheel_power_limitor_.omiga[1]) +
+           square(wheel_power_limitor_.omiga[2]) + square(wheel_power_limitor_.omiga[3]);
+    rls_->setU(all_in);
+    rls_->setX(x);
+    rls_->setY(chassis_power_);
+    rls_->update();
+    auto w = rls_->getW();
+    wheel_power_limitor_.effort_coeff = w(0);
+    wheel_power_limitor_.vel_coeff = w(1);
+    capacity_update_flag_ = false;
+  }
 
   // Publish power status.
   auto publishPower = [](auto& pub, const double power) {
