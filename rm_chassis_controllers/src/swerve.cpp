@@ -133,6 +133,7 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
 
 void SwerveController::moveJoint(const ros::Time& time, const ros::Duration& period)
 {
+  stateJudge();
   Vec2<double> vel_center(vel_cmd_.x, vel_cmd_.y);
   for (auto& module : modules_)
   {
@@ -171,6 +172,50 @@ geometry_msgs::Twist SwerveController::odometry()
       vel_modules.angular.z / modules_.size() /
       std::sqrt(std::pow(modules_.begin()->position_.x(), 2) + std::pow(modules_.begin()->position_.y(), 2));
   return vel_data;
+}
+
+void SwerveController::stateJudge()
+{
+  double cos_pitch{}, sin_pitch{};
+  ROS_INFO("pitch: %f,yaw: %f,roll: %f", pitch_, yaw_, roll_);
+  if (abs(pitch_) > 0.12)
+  {
+    cos_pitch = cos(pitch_);
+    sin_pitch = sin(pitch_);
+  }
+  else
+  {
+    cos_pitch = 1.0;
+    sin_pitch = 0.0;
+  }
+
+  for (size_t i = 0; i < modules_.size() && i < 4; ++i)
+  {
+    auto& module = modules_[i];
+
+    if (module.ctrl_wheel_->joint_.getName().find("front") != std::string::npos)
+    {
+      if (module.ctrl_wheel_->getJointName().find("left") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch + sin_pitch;
+      }
+      if (module.ctrl_wheel_->getJointName().find("right") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch + sin_pitch;
+      }
+    }
+    if (module.ctrl_wheel_->joint_.getName().find("back") != std::string::npos)
+    {
+      if (module.ctrl_wheel_->getJointName().find("left") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch - sin_pitch;
+      }
+      if (module.ctrl_wheel_->getJointName().find("right") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch - sin_pitch;
+      }
+    }
+  }
 }
 
 // Ref: https://gitee.com/cod_-control/rmcod2026_-sentry/tree/dev
@@ -251,14 +296,23 @@ void SwerveController::powerLimit()
       {
         double Sqrt = sqrtf(Delta);
         if (wheel_power_limitor_.torque[i] >= 0)
-          joint.setCommand((-B + Sqrt) / (2 * A));
+          joint.setCommand(((-B + Sqrt) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
         else
-          joint.setCommand((-B - Sqrt) / (2 * A));
+          joint.setCommand(((-B - Sqrt) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
       }
       else
       {
-        joint.setCommand((-B) / (2 * A));
+        joint.setCommand(((-B) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
       }
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < modules_.size() && i < 4; ++i)
+    {
+      auto& module = modules_[i];
+      auto& joint = module.ctrl_wheel_->joint_;
+      joint.setCommand(wheel_power_limitor_.torque[i] * wheel_power_limitor_.K_angle[i]);
     }
   }
 }

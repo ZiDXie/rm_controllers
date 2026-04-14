@@ -72,7 +72,7 @@ private:
   void powerLimit() override;
   void updatePowerStatus() override;
   void getBaseGyro();
-  double stateJudge(double vel_angle);
+  void stateJudge();
 
   std::vector<Module> modules_{};
   std::vector<hardware_interface::JointHandle> pivot_joint_handles_{};

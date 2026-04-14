@@ -88,6 +88,7 @@ struct PowerLimitor
   double omiga[4]{};
   double torque[4]{};
   double K{};
+  double K_angle[4]{};
 };
 
 template <typename... T>
