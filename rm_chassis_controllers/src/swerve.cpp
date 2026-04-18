@@ -58,7 +58,8 @@ bool SwerveController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHand
     controller_nh.getParam("power/pivot_effort_coeff", pivot_power_limitor_.effort_coeff);
     controller_nh.getParam("power/pivot_power_offset", pivot_power_limitor_.power_offset);
     controller_nh.getParam("power/pivot_power_ratio", pivot_power_limitor_.ratio);
-    controller_nh.param<bool>("use_rls", use_rls_, false);
+    controller_nh.param<bool>("power/use_rls", use_rls_, false);
+    controller_nh.param<bool>("power/use_K_angle", use_K_angle_, false);
   }
   catch (const std::exception& e)
   {
@@ -176,8 +177,15 @@ geometry_msgs::Twist SwerveController::odometry()
 
 void SwerveController::stateJudge()
 {
+  if (!use_K_angle_)
+  {
+    for (size_t i = 0; i < modules_.size() && i < 4; ++i)
+    {
+      wheel_power_limitor_.K_angle[i] = 1.0;
+    }
+    return;
+  }
   double cos_pitch{}, sin_pitch{};
-  ROS_INFO("pitch: %f,yaw: %f,roll: %f", pitch_, yaw_, roll_);
   if (abs(pitch_) > 0.12)
   {
     cos_pitch = cos(pitch_);

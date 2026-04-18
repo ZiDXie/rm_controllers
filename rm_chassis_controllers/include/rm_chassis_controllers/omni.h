@@ -28,6 +28,7 @@ private:
   Eigen::MatrixXd chassis2joints_;
   void powerLimit() override;
   void updatePowerStatus() override;
+  void stateJudge();
 
   std::array<LowPassFilter*, 4> motor_lp_filters_{};
   std::unique_ptr<Rls<double>> rls_{};

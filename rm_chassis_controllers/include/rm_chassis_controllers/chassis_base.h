@@ -230,6 +230,7 @@ protected:
   double chassis_power_{ 0.0 };
   bool capacity_update_flag_{ false };
   bool use_rls_{ false };
+  bool use_K_angle_{ false };
 
   bool gravity_estimation_offset_{ false };
   bool odom_initialized_{ false };

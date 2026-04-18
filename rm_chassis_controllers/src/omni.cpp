@@ -23,7 +23,8 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
     controller_nh.getParam("power/vel_coeff", wheel_power_limitor_.vel_coeff);
     controller_nh.getParam("power/effort_coeff", wheel_power_limitor_.effort_coeff);
     controller_nh.getParam("power/power_offset", wheel_power_limitor_.power_offset);
-    controller_nh.param<bool>("use_rls", use_rls_, false);
+    controller_nh.param<bool>("power/use_rls", use_rls_, false);
+    controller_nh.param<bool>("power/use_K_angle", use_K_angle_, false);
   }
   catch (const std::exception& e)
   {
@@ -111,9 +112,62 @@ geometry_msgs::Twist OmniController::odometry()
   return twist;
 }
 
+void OmniController::stateJudge()
+{
+  if (!use_K_angle_)
+  {
+    for (size_t i = 0; i < joints_.size() && i < 4; ++i)
+    {
+      wheel_power_limitor_.K_angle[i] = 1.0;
+    }
+    return;
+  }
+  double cos_pitch{}, sin_pitch{};
+  if (abs(pitch_) > 0.12)
+  {
+    cos_pitch = cos(pitch_);
+    sin_pitch = sin(pitch_);
+  }
+  else
+  {
+    cos_pitch = 1.0;
+    sin_pitch = 0.0;
+  }
+
+  for (size_t i = 0; i < joints_.size() && i < 4; ++i)
+  {
+    auto& ctl = joints_[i];
+    ;
+
+    if (ctl->joint_.getName().find("front") != std::string::npos)
+    {
+      if (ctl->getJointName().find("left") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch + sin_pitch;
+      }
+      if (ctl->getJointName().find("right") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch + sin_pitch;
+      }
+    }
+    if (ctl->joint_.getName().find("back") != std::string::npos)
+    {
+      if (ctl->getJointName().find("left") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch - sin_pitch;
+      }
+      if (ctl->getJointName().find("right") != std::string::npos)
+      {
+        wheel_power_limitor_.K_angle[i] = cos_pitch - sin_pitch;
+      }
+    }
+  }
+}
+
 void OmniController::powerLimit()
 {
   updatePowerStatus();
+  stateJudge();
   // multiply K to limit power for wheel joints.
   if (wheel_power_limitor_.err_sum > wheel_power_limitor_.err_upper)
   {
@@ -154,14 +208,23 @@ void OmniController::powerLimit()
       {
         double Sqrt = sqrtf(Delta);
         if (wheel_power_limitor_.torque[i] >= 0)
-          joint.setCommand((-B + Sqrt) / (2 * A));
+          joint.setCommand(((-B + Sqrt) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
         else
-          joint.setCommand((-B - Sqrt) / (2 * A));
+          joint.setCommand(((-B - Sqrt) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
       }
       else
       {
-        joint.setCommand((-B) / (2 * A));
+        joint.setCommand(((-B) / (2 * A)) * wheel_power_limitor_.K_angle[i]);
       }
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < joints_.size() && i < 4; ++i)
+    {
+      auto& ctl = joints_[i];
+      auto& joint = ctl->joint_;
+      joint.setCommand(wheel_power_limitor_.torque[i] * wheel_power_limitor_.K_angle[i]);
     }
   }
 }
