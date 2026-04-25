@@ -137,7 +137,6 @@ void OmniController::stateJudge()
   for (size_t i = 0; i < joints_.size() && i < 4; ++i)
   {
     auto& ctl = joints_[i];
-    ;
 
     if (ctl->joint_.getName().find("front") != std::string::npos)
     {

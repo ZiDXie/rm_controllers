@@ -66,7 +66,6 @@ struct Command
 {
   geometry_msgs::Twist cmd_vel_;
   rm_msgs::ChassisCmd cmd_chassis_;
-  rm_msgs::ChassisActiveSusCmd cmd_active_sus_;
   ros::Time stamp_;
 };
 

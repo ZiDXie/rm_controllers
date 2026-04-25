@@ -85,8 +85,8 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
                                                                                  &ChassisBase::capacityCallback, this);
 
   // Setup real_power from capacity publishers.
-  auto chassis_power_publisher = std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(
-      controller_nh, "power/chassis_power", 100);
+  auto chassis_power_publisher =
+      std::make_unique<realtime_tools::RealtimePublisher<std_msgs::Float64>>(controller_nh, "power/chassis_power", 100);
   this->chassis_power_pub_ = std::move(chassis_power_publisher);
 
   // Setup odometry realtime publisher + odom message constant fields
