@@ -274,12 +274,13 @@ void OmniController::updatePowerStatus()
            square(wheel_power_limitor_.torque[2]) + square(wheel_power_limitor_.torque[3]);
     x(1) = square(wheel_power_limitor_.omiga[0]) + square(wheel_power_limitor_.omiga[1]) +
            square(wheel_power_limitor_.omiga[2]) + square(wheel_power_limitor_.omiga[3]);
+    rls_->setU(all_in);
     rls_->setX(x);
-    rls_->setY(chassis_power_ - all_in);
+    rls_->setY(chassis_power_);
     rls_->update();
     auto w = rls_->getW();
-    wheel_power_limitor_.effort_coeff = std::max(w(0), 1e-5);
-    wheel_power_limitor_.vel_coeff = std::max(w(1), 1e-5);
+    wheel_power_limitor_.effort_coeff = std::max(w(0), 1e-3);
+    wheel_power_limitor_.vel_coeff = std::max(w(1), 1e-3);
     capacity_update_flag_ = false;
   }
 
