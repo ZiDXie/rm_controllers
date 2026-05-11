@@ -387,8 +387,8 @@ void SwerveController::updatePowerStatus()
 
   if (capacity_update_flag_ && use_rls_)
   {
-    // Update Rls.
     double all_in = limit(estimated_total_power, -power_limit, power_limit);
+    // Update Rls: compute regression vector x and pass actual measured power
     Eigen::Matrix<double, 4, 1> x;
     x(0) = square(pivot_power_limitor_.torque[0]) + square(pivot_power_limitor_.torque[1]) +
            square(pivot_power_limitor_.torque[2]) + square(pivot_power_limitor_.torque[3]);
@@ -398,15 +398,14 @@ void SwerveController::updatePowerStatus()
            square(wheel_power_limitor_.torque[2]) + square(wheel_power_limitor_.torque[3]);
     x(3) = square(wheel_power_limitor_.omiga[0]) + square(wheel_power_limitor_.omiga[1]) +
            square(wheel_power_limitor_.omiga[2]) + square(wheel_power_limitor_.omiga[3]);
-    rls_->setU(all_in);
     rls_->setX(x);
-    rls_->setY(chassis_power_);
-    rls_->update();
+    rls_->setY(chassis_power_ - all_in);
+    rls_->update();  // Internally computes predicted output as x^T * w
     auto w = rls_->getW();
-    pivot_power_limitor_.effort_coeff = w(0);
-    pivot_power_limitor_.vel_coeff = w(1);
-    wheel_power_limitor_.effort_coeff = w(2);
-    wheel_power_limitor_.vel_coeff = w(3);
+    pivot_power_limitor_.effort_coeff = std::max(w(0), 1e-5);
+    pivot_power_limitor_.vel_coeff = std::max(w(1), 1e-5);
+    wheel_power_limitor_.effort_coeff = std::max(w(2), 1e-5);
+    wheel_power_limitor_.vel_coeff = std::max(w(3), 1e-5);
     capacity_update_flag_ = false;
   }
 

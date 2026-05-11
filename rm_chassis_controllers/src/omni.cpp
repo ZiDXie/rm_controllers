@@ -32,8 +32,8 @@ bool OmniController::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle
     return false;
   }
 
-  wheel_power_limitor_.err_upper = 4000;
-  wheel_power_limitor_.err_lower = 10;
+  wheel_power_limitor_.err_upper = 500;
+  wheel_power_limitor_.err_lower = 0.01;
 
   rls_ = std::make_unique<Rls<double>>(2, 1, 0.99999, 1e-5);
   Eigen::Matrix<double, 2, 1> w;
@@ -268,18 +268,18 @@ void OmniController::updatePowerStatus()
   {
     // Update Rls.
     double all_in = limit(estimated_total_power, -power_limit, power_limit);
+    // Update Rls: compute regression vector x and pass actual measured power
     Eigen::Matrix<double, 2, 1> x;
     x(0) = square(wheel_power_limitor_.torque[0]) + square(wheel_power_limitor_.torque[1]) +
            square(wheel_power_limitor_.torque[2]) + square(wheel_power_limitor_.torque[3]);
     x(1) = square(wheel_power_limitor_.omiga[0]) + square(wheel_power_limitor_.omiga[1]) +
            square(wheel_power_limitor_.omiga[2]) + square(wheel_power_limitor_.omiga[3]);
-    rls_->setU(all_in);
     rls_->setX(x);
-    rls_->setY(chassis_power_);
+    rls_->setY(chassis_power_ - all_in);
     rls_->update();
     auto w = rls_->getW();
-    wheel_power_limitor_.effort_coeff = w(0);
-    wheel_power_limitor_.vel_coeff = w(1);
+    wheel_power_limitor_.effort_coeff = std::max(w(0), 1e-5);
+    wheel_power_limitor_.vel_coeff = std::max(w(1), 1e-5);
     capacity_update_flag_ = false;
   }
 
